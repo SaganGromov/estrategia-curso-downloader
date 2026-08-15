@@ -1,6 +1,6 @@
 # Estratégia Curso Downloader
 
-Baixa os vídeos e PDFs dos cursos aos quais a sua conta do Estratégia Concursos tem acesso, organizando o conteúdo por curso e aula.
+Baixa vídeos, PDFs, slides, mapas mentais e outros materiais dos cursos aos quais a sua conta do Estratégia Concursos tem acesso, organizando o conteúdo por curso e aula.
 
 > Este projeto é um **fork aprimorado** de [suygetsu-bot/estrategia-video-downloader](https://github.com/suygetsu-bot/estrategia-video-downloader). Ele preserva a ideia original e acrescenta uma experiência guiada, PDFs, escolha automática da melhor qualidade, downloads imediatos, retomada e organização automática.
 
@@ -9,7 +9,7 @@ Baixa os vídeos e PDFs dos cursos aos quais a sua conta do Estratégia Concurso
 - abre janelas para solicitar login, ID/URL do curso e pasta de destino;
 - não salva sua senha em arquivo — ela permanece somente na memória enquanto o programa roda;
 - abre o Microsoft Edge para login, captcha ou autenticação em duas etapas;
-- procura PDFs na página geral do curso e dentro de cada aula;
+- procura livros eletrônicos originais, simplificados e com marcações, PDFs, slides, mapas mentais e outros materiais na página geral e nas aulas;
 - baixa cada vídeo na **maior resolução disponibilizada pelo site**;
 - começa a baixar assim que encontra cada arquivo, sem esperar a varredura terminar;
 - mostra progresso individual e cumulativo, velocidade e estimativas de tempo;
@@ -36,16 +36,16 @@ Na página deste repositório, clique em **Code → Download ZIP** e extraia o Z
 
 ### 2. Inicie com duplo clique
 
-Para baixar vídeos e PDFs, dê duplo clique em:
+Para baixar absolutamente todo o conteúdo encontrado, dê duplo clique em:
 
 ```text
 iniciar.bat
 ```
 
-Para baixar somente os PDFs, use:
+Para baixar somente todos os PDFs e slides, use:
 
 ```text
-iniciar_somente_pdfs.bat
+iniciar_pdfs_e_slides.bat
 ```
 
 Na primeira execução, o iniciador instala automaticamente as duas dependências Python necessárias.
@@ -77,6 +77,10 @@ Ao escolher, por exemplo, `D:\Meus estudos`, o programa cria a pasta do curso:
 ```text
 D:\Meus estudos\Nome do curso\
 ├── Aula 01 - PDF 01 - Livro digital.pdf
+├── Aula 01 - PDF 02 - Livro versão simplificada.pdf
+├── Aula 01 - PDF 03 - Livro marcação dos aprovados.pdf
+├── Aula 01 - Slides 04 - Apresentação da aula.pptx
+├── Aula 01 - Mapa Mental 05 - Resumo visual.pdf
 ├── Aula 01 - Vídeo 01 - Apresentação.mp4
 ├── Aula 01 - Vídeo 02 - Conteúdo.mp4
 ├── links_estrategia_conteudo.txt
@@ -115,10 +119,10 @@ Baixe tudo:
 py .\estrategia_download_edge_any.py
 ```
 
-Baixe somente PDFs:
+Baixe somente PDFs e slides:
 
 ```powershell
-py .\estrategia_download_edge_any.py --somente-pdfs
+py .\estrategia_download_edge_any.py --pdfs-e-slides
 ```
 
 Consulte as opções:
@@ -160,9 +164,9 @@ Atualize o Microsoft Edge e confirme que há acesso à internet. O Selenium Mana
 
 Veja se o Edge está esperando clique em **Entrar**, captcha ou autenticação em duas etapas. O limite padrão é de dez minutos.
 
-### Nenhuma aula ou PDF foi encontrado
+### Alguma versão do livro, slide ou mapa mental não foi encontrada
 
-Confirme o ID informado e o acesso da conta. O site pode alterar sua interface; nesse caso, abra uma issue com a mensagem exibida e, sem expor credenciais, uma descrição da tela.
+O detector reconhece cartões por URL, extensão e textos como “Livro Eletrônico”, “versão simplificada”, “marcação dos aprovados”, “slides”, “apresentação” e “mapa mental”. Quando um cartão reconhecido não expõe uma URL acessível, o programa registra `Material reconhecido, mas sem URL acessível` no log. Nesse caso, abra uma issue com essa linha e uma captura da tela, sem expor credenciais.
 
 ### Um arquivo falhou
 
@@ -179,4 +183,4 @@ Use esta ferramenta somente para conteúdos aos quais você tem acesso autorizad
 ## Créditos
 
 - Projeto original: [suygetsu-bot/estrategia-video-downloader](https://github.com/suygetsu-bot/estrategia-video-downloader)
-- Este fork: melhorias de usabilidade, autenticação guiada, parametrização do curso, PDFs, melhor qualidade disponível, progresso e organização de arquivos.
+- Este fork: melhorias de usabilidade, autenticação guiada, parametrização do curso, descoberta abrangente de materiais, melhor qualidade disponível, progresso e organização de arquivos.

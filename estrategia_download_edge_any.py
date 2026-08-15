@@ -4,6 +4,7 @@ import re
 import sys
 import time
 import traceback
+import unicodedata
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -15,6 +16,18 @@ from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+
+
+def configurar_saida_terminal():
+    """Evita falhas quando um console antigo não suporta algum símbolo Unicode."""
+    for fluxo in (sys.stdout, sys.stderr):
+        try:
+            fluxo.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+configurar_saida_terminal()
 
 # =========================================================
 # CONFIGURAÇÕES BÁSICAS
@@ -38,12 +51,19 @@ LOGIN_TIMEOUT = int(os.getenv("ESTRATEGIA_LOGIN_TIMEOUT", "600"))
 
 def ler_argumentos():
     parser = argparse.ArgumentParser(
-        description="Baixa vídeos e PDFs das aulas do Estratégia."
+        description="Baixa vídeos, PDFs, slides e outros materiais do Estratégia."
+    )
+    parser.add_argument(
+        "--pdfs-e-slides",
+        dest="pdfs_e_slides",
+        action="store_true",
+        help="baixa todos os PDFs e slides, sem vídeos ou mapas mentais",
     )
     parser.add_argument(
         "--somente-pdfs",
+        dest="pdfs_e_slides",
         action="store_true",
-        help="baixa todos os PDFs encontrados, sem procurar ou baixar vídeos",
+        help=argparse.SUPPRESS,
     )
     return parser.parse_args()
 
@@ -643,19 +663,50 @@ def _texto_link(elemento) -> str:
     return " ".join(str(parte).strip() for parte in partes if parte).strip()
 
 
-def _parece_link_pdf(href: str, descricao: str) -> bool:
-    href_normalizado = unquote(href).lower()
-    descricao_normalizada = descricao.lower()
-    return bool(
-        re.search(r"\.pdf(?:$|[?#&])", href_normalizado)
-        or "/pdf/" in href_normalizado
-        or re.search(r"[?&](?:format|type|filetype)=pdf(?:&|$)", href_normalizado)
-        or re.search(r"(?:^|[^a-z])pdf(?:[^a-z]|$)", descricao_normalizada)
+def _normalizar_texto(valor: str) -> str:
+    decomposicao = unicodedata.normalize("NFKD", valor)
+    return "".join(
+        caractere for caractere in decomposicao if not unicodedata.combining(caractere)
+    ).lower()
+
+
+def classificar_material(href: str, descricao: str):
+    """Classifica cartões mesmo quando URL e texto não contêm a extensão."""
+    texto = _normalizar_texto(f"{descricao} {unquote(href)}")
+    acao_download = "baixar" in texto or "download" in texto
+
+    if "mapa mental" in texto or "mapa-mental" in texto:
+        return "mapa_mental"
+    if re.search(r"\bslides?\b", texto) or ("apresentacao" in texto and acao_download):
+        return "slides"
+
+    sinais_pdf = (
+        r"\.pdf(?:$|[?#&])",
+        r"/pdf/",
+        r"[?&](?:format|type|filetype)=pdf(?:&|$)",
+        r"\bpdf\b",
+        r"livro (?:eletronico|digital)",
+        r"versao (?:simplificada|original)",
+        r"marcacao dos aprovados",
+        r"apostila",
+        r"aula em texto",
+        r"material escrito",
     )
+    if any(re.search(padrao, texto) for padrao in sinais_pdf):
+        return "pdf"
+
+    extensoes = r"\.(?:pptx?|docx?|xlsx?|zip|rar|png|jpe?g)(?:$|[?#&])"
+    if (
+        re.search(extensoes, texto)
+        or (acao_download and not re.search(r"\b\d{3,4}\s*p\b", texto))
+        or re.search(r"/(?:materiais?|arquivos?|files?)/", texto)
+    ):
+        return "material"
+    return None
 
 
 def _url_do_elemento(elemento, url_atual: str) -> str:
-    for atributo in (
+    atributos = (
         "href",
         "src",
         "data",
@@ -663,66 +714,139 @@ def _url_do_elemento(elemento, url_atual: str) -> str:
         "data-url",
         "data-download-url",
         "data-file-url",
-    ):
-        valor = (elemento.get_attribute(atributo) or "").strip()
-        if valor and not valor.startswith(("javascript:", "data:", "#")):
-            return urljoin(url_atual, valor)
-
-    # Alguns botões guardam a URL diretamente no onclick.
-    onclick = elemento.get_attribute("onclick") or ""
-    candidato = re.search(
-        r"['\"]([^'\"]*(?:\.pdf|/pdf/)[^'\"]*)['\"]", onclick, re.IGNORECASE
     )
-    return urljoin(url_atual, candidato.group(1)) if candidato else ""
 
+    def procurar_atributos(alvo):
+        for atributo in atributos:
+            valor = (alvo.get_attribute(atributo) or "").strip()
+            if valor and not valor.startswith(("javascript:", "data:", "#")):
+                return urljoin(url_atual, valor)
+        return ""
 
-def _titulo_pdf(elemento, href: str, indice: int) -> str:
-    titulo = _texto_link(elemento)
-    nome_url = Path(unquote(urlparse(href).path)).name
+    url = procurar_atributos(elemento)
+    if url:
+        return url
 
-    if not titulo or titulo.lower() in {"pdf", "baixar pdf", "download pdf", "baixar"}:
-        titulo = nome_url or f"PDF {indice:02d}"
-
-    titulo = re.sub(r"\.pdf$", "", titulo, flags=re.IGNORECASE)
-    titulo = re.sub(r"\s+", " ", titulo).strip(" .-_")
-    return safe_filename(titulo) or f"PDF {indice:02d}"
-
-
-def iterar_pdfs_da_aula_atual(driver, aula_num: int, aula_nome: str):
-    """Entrega todos os links de PDF visíveis na aula, sem duplicatas."""
-    vistos = set()
-    encontrados = []
-
-    seletor = (
-        "a[href], iframe[src], embed[src], object[data], [data-href], "
-        "[data-url], [data-download-url], [data-file-url], [onclick]"
-    )
-    for elemento in driver.find_elements(By.CSS_SELECTOR, seletor):
+    for xpath in ("./ancestor::a[@href][1]", ".//a[@href][1]"):
         try:
-            href = _url_do_elemento(elemento, driver.current_url)
-            if not href:
-                continue
-
-            descricao = _texto_link(elemento)
-            if not _parece_link_pdf(href, descricao) or href in vistos:
-                continue
-
-            vistos.add(href)
-            encontrados.append((elemento, href))
+            relacionado = elemento.find_element(By.XPATH, xpath)
+            url = procurar_atributos(relacionado)
+            if url:
+                return url
         except Exception:
             continue
 
-    print(f"   📄 PDFs encontrados: {len(encontrados)}")
-    for indice, (elemento, href) in enumerate(encontrados, start=1):
-        titulo = _titulo_pdf(elemento, href, indice)
-        print(f"      ✅ PDF {indice:02d}: {titulo} -> {href}")
+    # Alguns botões guardam a URL diretamente no onclick.
+    onclick = elemento.get_attribute("onclick") or ""
+    candidato = re.search(r"['\"]((?:https?://|/)[^'\"]+)['\"]", onclick, re.IGNORECASE)
+    return urljoin(url_atual, candidato.group(1)) if candidato else ""
+
+
+def _titulo_material(elemento, href: str, indice: int, tipo: str) -> str:
+    titulo = _texto_link(elemento)
+    nome_url = Path(unquote(urlparse(href).path)).name
+    rotulo = {
+        "pdf": "PDF",
+        "slides": "Slides",
+        "mapa_mental": "Mapa Mental",
+        "material": "Material",
+    }[tipo]
+
+    if not titulo or _normalizar_texto(titulo) in {
+        "pdf",
+        "baixar pdf",
+        "download pdf",
+        "baixar",
+        "download",
+    }:
+        titulo = nome_url or f"{rotulo} {indice:02d}"
+
+    titulo = re.sub(
+        r"\.(?:pdf|pptx?|docx?|xlsx?|zip|rar|png|jpe?g)$",
+        "",
+        titulo,
+        flags=re.IGNORECASE,
+    )
+    titulo = re.sub(r"\s+", " ", titulo).strip(" .-_")
+    return safe_filename(titulo) or f"{rotulo} {indice:02d}"
+
+
+def _extensao_material(tipo: str, href: str) -> str:
+    extensao = Path(unquote(urlparse(href).path)).suffix.lower()
+    permitidas = {
+        ".pdf",
+        ".ppt",
+        ".pptx",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".zip",
+        ".rar",
+        ".png",
+        ".jpg",
+        ".jpeg",
+    }
+    if extensao in permitidas:
+        return extensao
+    return ".bin" if tipo == "material" else ".pdf"
+
+
+def iterar_materiais_da_aula_atual(
+    driver,
+    aula_num: int,
+    aula_nome: str,
+    tipos_permitidos=None,
+):
+    """Entrega PDFs, slides, mapas mentais e outros materiais sem duplicatas."""
+    vistos = set()
+    encontrados = []
+    sem_url = set()
+
+    seletor = (
+        "a, iframe[src], embed[src], object[data], [data-href], "
+        "[data-url], [data-download-url], [data-file-url], [onclick], "
+        "button, [role='button'], [class*='download'], [class*='Download']"
+    )
+    for elemento in driver.find_elements(By.CSS_SELECTOR, seletor):
+        try:
+            descricao = _texto_link(elemento)
+            href = _url_do_elemento(elemento, driver.current_url)
+            tipo = classificar_material(href, descricao)
+            if not tipo or (tipos_permitidos and tipo not in tipos_permitidos):
+                continue
+            if not href:
+                if descricao:
+                    sem_url.add(" ".join(descricao.split())[:160])
+                continue
+            if href in vistos:
+                continue
+
+            vistos.add(href)
+            encontrados.append((elemento, href, tipo))
+        except Exception:
+            continue
+
+    print(f"   📚 Materiais encontrados: {len(encontrados)}")
+    for descricao in sorted(sem_url):
+        print(f"      ⚠️ Material reconhecido, mas sem URL acessível: {descricao}")
+
+    rotulos = {
+        "pdf": "PDF",
+        "slides": "Slides",
+        "mapa_mental": "Mapa Mental",
+        "material": "Material",
+    }
+    for indice, (elemento, href, tipo) in enumerate(encontrados, start=1):
+        titulo = _titulo_material(elemento, href, indice, tipo)
+        print(f"      ✅ {rotulos[tipo]} {indice:02d}: {titulo} -> {href}")
         yield {
-            "tipo": "pdf",
+            "tipo": tipo,
             "aula_num": aula_num,
             "aula_nome": safe_filename(aula_nome),
             "item_num": indice,
             "titulo": titulo,
-            "extensao": ".pdf",
+            "extensao": _extensao_material(tipo, href),
             "url": href,
         }
 
@@ -764,6 +888,51 @@ def formatar_duracao(segundos) -> str:
     if horas:
         return f"{horas:02d}:{minutos:02d}:{segundos:02d}"
     return f"{minutos:02d}:{segundos:02d}"
+
+
+def detectar_extensao_resposta(resposta, url: str, fallback: str) -> str:
+    disposition = resposta.headers.get("Content-Disposition") or ""
+    nomes = re.findall(
+        r"filename\*?=(?:UTF-8''|\")?([^\";]+)",
+        disposition,
+        flags=re.IGNORECASE,
+    )
+    candidatos = nomes + [unquote(urlparse(url).path)]
+    permitidas = {
+        ".pdf",
+        ".ppt",
+        ".pptx",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".zip",
+        ".rar",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".mp4",
+    }
+    for candidato in candidatos:
+        extensao = Path(unquote(candidato).strip()).suffix.lower()
+        if extensao in permitidas:
+            return extensao
+
+    content_type = (resposta.headers.get("Content-Type") or "").split(";", 1)[0]
+    por_tipo = {
+        "application/pdf": ".pdf",
+        "application/vnd.ms-powerpoint": ".ppt",
+        "application/vnd.openxmlformats-officedocument."
+        "presentationml.presentation": ".pptx",
+        "application/msword": ".doc",
+        "application/vnd.openxmlformats-officedocument."
+        "wordprocessingml.document": ".docx",
+        "application/zip": ".zip",
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "video/mp4": ".mp4",
+    }
+    return por_tipo.get(content_type.lower(), fallback)
 
 
 class GerenciadorDownloads:
@@ -924,7 +1093,13 @@ class GerenciadorDownloads:
             self._progresso_ativo = False
 
     def _nome_destino(self, item) -> str:
-        tipo_nome = "Vídeo" if item["tipo"] == "video" else "PDF"
+        tipo_nome = {
+            "video": "Vídeo",
+            "pdf": "PDF",
+            "slides": "Slides",
+            "mapa_mental": "Mapa Mental",
+            "material": "Material",
+        }.get(item["tipo"], "Material")
         origem = "Curso" if item["aula_num"] == 0 else f"Aula {item['aula_num']:02d}"
         base_name = safe_filename(
             f"{origem} - {tipo_nome} {item['item_num']:02d} - {item['titulo']}"
@@ -975,6 +1150,22 @@ class GerenciadorDownloads:
                             "o servidor devolveu HTML em vez do arquivo; o link pode "
                             "ter expirado ou a sessão pode não estar autorizada"
                         )
+
+                    extensao_real = detectar_extensao_resposta(
+                        resposta, url, destino.suffix
+                    )
+                    if extensao_real != destino.suffix.lower():
+                        destino = destino.with_suffix(extensao_real)
+                        temporario = destino.with_suffix(destino.suffix + ".part")
+                        final_name = destino.name
+                        print(
+                            f"      ℹ️ Formato detectado pelo servidor: {extensao_real}"
+                        )
+                        if destino.exists() and destino.stat().st_size > 0:
+                            self.existentes += 1
+                            self.bytes_existentes += destino.stat().st_size
+                            print(f"      ⏭️ Já existe: {final_name}")
+                            return True
 
                     total = int(resposta.headers.get("Content-Length") or 0)
                     ultimo_total = total
@@ -1055,14 +1246,16 @@ def main():
         gerenciador.configurar_total_aulas(len(aulas))
         out_txt = download_dir / "links_estrategia_conteudo.txt"
 
-        if args.somente_pdfs:
+        tipos_permitidos = {"pdf", "slides"} if args.pdfs_e_slides else None
+        if args.pdfs_e_slides:
             print(
-                "\n📄 Modo somente PDFs ativado; nenhum vídeo será "
-                "procurado ou baixado."
+                "\n📄 Modo PDFs + slides ativado; vídeos, mapas mentais e "
+                "outros materiais não serão baixados."
             )
         else:
             print(
-                "\n⬇️ Modo completo: todos os PDFs e vídeos serão procurados e baixados."
+                "\n⬇️ Modo completo: vídeos, PDFs, slides, mapas mentais e "
+                "demais materiais serão procurados e baixados."
             )
         print("   O download começará assim que cada arquivo for localizado.")
         with open(out_txt, "w", encoding="utf-8") as arquivo_links:
@@ -1071,9 +1264,12 @@ def main():
 
             # A página geral do curso às vezes contém apostilas ou materiais
             # que não reaparecem dentro de nenhuma aula.
-            print("\n➡️ Procurando PDFs gerais na página do curso...")
-            for item in iterar_pdfs_da_aula_atual(
-                driver, 0, "Materiais gerais do curso"
+            print("\n➡️ Procurando materiais gerais na página do curso...")
+            for item in iterar_materiais_da_aula_atual(
+                driver,
+                0,
+                "Materiais gerais do curso",
+                tipos_permitidos,
             ):
                 registrar_e_baixar(item, arquivo_links, gerenciador)
 
@@ -1099,8 +1295,10 @@ def main():
                     f"(número identificado: {num:02d})"
                 )
 
-                fontes = [iterar_pdfs_da_aula_atual(driver, num, nome)]
-                if not args.somente_pdfs:
+                fontes = [
+                    iterar_materiais_da_aula_atual(driver, num, nome, tipos_permitidos)
+                ]
+                if not args.pdfs_e_slides:
                     fontes.append(iterar_videos_da_aula_atual(driver, num, nome))
                 for fonte in fontes:
                     for item in fonte:
