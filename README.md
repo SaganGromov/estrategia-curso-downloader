@@ -12,7 +12,7 @@ Baixa os vídeos e PDFs dos cursos aos quais a sua conta do Estratégia Concurso
 - procura PDFs na página geral do curso e dentro de cada aula;
 - baixa cada vídeo na **maior resolução disponibilizada pelo site**;
 - começa a baixar assim que encontra cada arquivo, sem esperar a varredura terminar;
-- mostra progresso, tamanho, tentativas, arquivos existentes e falhas;
+- mostra progresso individual e cumulativo, velocidade e estimativas de tempo;
 - evita links duplicados e mantém downloads incompletos com a extensão `.part`;
 - cria uma subpasta com o nome do curso;
 - registra os links encontrados em `links_estrategia_conteudo.txt`;
@@ -85,6 +85,22 @@ D:\Meus estudos\Nome do curso\
 
 Em uma nova execução na mesma pasta, arquivos completos já existentes são ignorados. Arquivos `.part` podem ser baixados novamente com segurança.
 
+## Progresso, velocidade e ETA
+
+Durante cada download, uma linha é atualizada aproximadamente a cada segundo com três blocos:
+
+```text
+Item #3 42.0% 420 MB/1 GB 12 MB/s ETA 00:48 |
+Conhecido 2/3 66.7% 1.2/1.8 GB média 9 MB/s ETA 01:05 |
+Curso aula 2/20 ETA~ 03:45:00
+```
+
+- **Item** é o arquivo atual: porcentagem, bytes, velocidade e ETA individual.
+- **Conhecido** é o acumulado de tudo que já foi localizado: arquivos concluídos, bytes, velocidade média efetiva e ETA desse conjunto.
+- **Curso ETA~** é uma aproximação baseada no tamanho médio das aulas já concluídas e na velocidade observada.
+
+O programa baixa cada arquivo assim que o encontra. Por isso, arquivos de aulas ainda não visitadas não entram imediatamente no total: o indicador **Conhecido** cresce durante a varredura. Isso preserva o início imediato dos downloads sem fingir que o tamanho futuro já é conhecido. O ETA do curso aparece como `calculando` no começo e pode ficar indisponível quando o servidor não informa tamanhos ou quando ocorre uma falha.
+
 ## Uso pelo terminal (opcional)
 
 Instale as dependências:
@@ -151,6 +167,10 @@ Confirme o ID informado e o acesso da conta. O site pode alterar sua interface; 
 ### Um arquivo falhou
 
 O programa tenta cada download três vezes e apresenta um resumo final. Execute novamente usando a mesma pasta: arquivos completos serão ignorados e os restantes serão tentados de novo.
+
+### O ETA mudou durante a execução
+
+Isso é esperado. Novos arquivos entram no total conforme as aulas são abertas, e a velocidade da conexão pode variar. O símbolo `~` identifica a estimativa estatística do curso inteiro; o ETA individual tende a ser mais preciso.
 
 ## Uso responsável
 

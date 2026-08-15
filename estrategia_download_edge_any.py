@@ -755,6 +755,17 @@ def formatar_tamanho(total_bytes: int) -> str:
     return f"{valor:.1f} TB"
 
 
+def formatar_duracao(segundos) -> str:
+    if segundos is None or segundos < 0:
+        return "--:--"
+    total = int(segundos + 0.5)
+    horas, resto = divmod(total, 3600)
+    minutos, segundos = divmod(resto, 60)
+    if horas:
+        return f"{horas:02d}:{minutos:02d}:{segundos:02d}"
+    return f"{minutos:02d}:{segundos:02d}"
+
+
 class GerenciadorDownloads:
     def __init__(self, download_dir: Path, driver, curso_url: str, max_tentativas=3):
         self.download_dir = download_dir
@@ -766,6 +777,151 @@ class GerenciadorDownloads:
         self.baixados = 0
         self.existentes = 0
         self.falhas = 0
+        self.bytes_baixados = 0
+        self.bytes_existentes = 0
+        self.bytes_falhos_conhecidos = 0
+        self.inicio_downloads = None
+        self.total_aulas = 0
+        self.aula_atual = 0
+        self.bytes_inicio_aula = 0
+        self.tamanhos_aulas_concluidas = []
+        self._ultimo_progresso = 0.0
+        self._largura_progresso = 0
+        self._progresso_ativo = False
+
+    def configurar_total_aulas(self, total_aulas: int):
+        self.total_aulas = total_aulas
+
+    def iniciar_aula(self, posicao: int):
+        self.aula_atual = posicao
+        self.bytes_inicio_aula = self._bytes_logicos_conhecidos()
+
+    def concluir_aula(self):
+        tamanho = self._bytes_logicos_conhecidos() - self.bytes_inicio_aula
+        if tamanho > 0:
+            self.tamanhos_aulas_concluidas.append(tamanho)
+
+    def _bytes_prontos(self) -> int:
+        return self.bytes_baixados + self.bytes_existentes
+
+    def _bytes_logicos_conhecidos(self) -> int:
+        return self._bytes_prontos() + self.bytes_falhos_conhecidos
+
+    def _velocidade_media(self, agora: float, recebido_atual: int = 0) -> float:
+        if self.inicio_downloads is None:
+            return 0.0
+        decorrido = max(agora - self.inicio_downloads, 0.001)
+        return (self.bytes_baixados + recebido_atual) / decorrido
+
+    def _eta_curso(self, total_conhecido: int, pronto: int, velocidade: float):
+        if (
+            not self.tamanhos_aulas_concluidas
+            or not self.aula_atual
+            or not velocidade
+            or self.falhas
+        ):
+            return None
+
+        media_aula = sum(self.tamanhos_aulas_concluidas) / len(
+            self.tamanhos_aulas_concluidas
+        )
+        conhecido_na_aula = max(total_conhecido - self.bytes_inicio_aula, 0)
+        restante_aula_atual = max(media_aula - conhecido_na_aula, 0)
+        aulas_futuras = max(self.total_aulas - self.aula_atual, 0)
+        restante_estimado = (
+            max(total_conhecido - pronto, 0)
+            + restante_aula_atual
+            + media_aula * aulas_futuras
+        )
+        return restante_estimado / velocidade
+
+    def _mostrar_progresso(
+        self,
+        recebido: int,
+        total_item: int,
+        inicio_item: float,
+        *,
+        final=False,
+    ):
+        agora = time.monotonic()
+        if not final and agora - self._ultimo_progresso < 1:
+            return
+        self._ultimo_progresso = agora
+
+        decorrido_item = max(agora - inicio_item, 0.001)
+        velocidade_item = recebido / decorrido_item
+        restante_item = max(total_item - recebido, 0) if total_item else None
+        eta_item = (
+            restante_item / velocidade_item if velocidade_item and total_item else None
+        )
+
+        pronto_base = self._bytes_prontos()
+        total_base = self._bytes_logicos_conhecidos()
+        pronto = pronto_base + recebido
+        total_conhecido = total_base + total_item if total_item else 0
+        velocidade_media = self._velocidade_media(agora, recebido)
+
+        if total_item:
+            percentual_item = min(recebido * 100 / total_item, 100)
+            item_texto = (
+                f"Item #{self.encontrados} {percentual_item:5.1f}% "
+                f"{formatar_tamanho(recebido)}/{formatar_tamanho(total_item)}"
+            )
+        else:
+            item_texto = f"Item #{self.encontrados} {formatar_tamanho(recebido)}/?"
+
+        item_texto += (
+            f" {formatar_tamanho(int(velocidade_item))}/s "
+            f"ETA {formatar_duracao(eta_item)}"
+        )
+
+        arquivos_prontos = self.baixados + self.existentes + (1 if final else 0)
+        if total_conhecido:
+            percentual_total = min(pronto * 100 / total_conhecido, 100)
+            eta_conhecido = (
+                (total_conhecido - pronto) / velocidade_media
+                if velocidade_media and not self.falhas
+                else None
+            )
+            total_texto = (
+                f"Conhecido {arquivos_prontos}/{self.encontrados} "
+                f"{percentual_total:5.1f}% {formatar_tamanho(pronto)}/"
+                f"{formatar_tamanho(total_conhecido)} "
+                f"média {formatar_tamanho(int(velocidade_media))}/s "
+                f"ETA {formatar_duracao(eta_conhecido)}"
+            )
+        else:
+            total_texto = (
+                f"Conhecido {arquivos_prontos}/{self.encontrados} "
+                f"{formatar_tamanho(pronto)} baixados; tamanho em descoberta "
+                f"média {formatar_tamanho(int(velocidade_media))}/s ETA --:--"
+            )
+
+        eta_curso = self._eta_curso(total_conhecido, pronto, velocidade_media)
+        if self.total_aulas:
+            if eta_curso is not None:
+                eta_curso_texto = formatar_duracao(eta_curso)
+            elif self.falhas:
+                eta_curso_texto = "indisponível"
+            else:
+                eta_curso_texto = "calculando"
+            curso_texto = (
+                f"Curso aula {self.aula_atual}/{self.total_aulas} "
+                f"ETA~ {eta_curso_texto}"
+            )
+        else:
+            curso_texto = "Curso ETA~ calculando"
+
+        linha = f"         {item_texto} | {total_texto} | {curso_texto}"
+        self._largura_progresso = max(self._largura_progresso, len(linha))
+        fim = "\n" if final else ""
+        print(f"\r{linha.ljust(self._largura_progresso)}", end=fim, flush=True)
+        self._progresso_ativo = not final
+
+    def _encerrar_linha_progresso(self):
+        if self._progresso_ativo:
+            print()
+            self._progresso_ativo = False
 
     def _nome_destino(self, item) -> str:
         tipo_nome = "Vídeo" if item["tipo"] == "video" else "PDF"
@@ -795,9 +951,11 @@ class GerenciadorDownloads:
 
         if destino.exists() and destino.stat().st_size > 0:
             self.existentes += 1
+            self.bytes_existentes += destino.stat().st_size
             print(f"      ⏭️ Já existe: {final_name}")
             return True
 
+        ultimo_total = 0
         for tentativa in range(1, self.max_tentativas + 1):
             print(
                 f"      ⬇️ Arquivo encontrado #{self.encontrados}: {final_name} "
@@ -805,6 +963,10 @@ class GerenciadorDownloads:
                 flush=True,
             )
             try:
+                inicio_item = time.monotonic()
+                if self.inicio_downloads is None:
+                    self.inicio_downloads = inicio_item
+                self._ultimo_progresso = 0
                 with self.sessao.get(url, stream=True, timeout=(30, 120)) as resposta:
                     resposta.raise_for_status()
                     content_type = (resposta.headers.get("Content-Type") or "").lower()
@@ -815,46 +977,34 @@ class GerenciadorDownloads:
                         )
 
                     total = int(resposta.headers.get("Content-Length") or 0)
+                    ultimo_total = total
                     recebido = 0
-                    ultimo_percentual = -10
-                    ultimo_aviso = time.monotonic()
                     with open(temporario, "wb") as arquivo:
                         for chunk in resposta.iter_content(chunk_size=1024 * 512):
                             if not chunk:
                                 continue
                             arquivo.write(chunk)
                             recebido += len(chunk)
+                            self._mostrar_progresso(recebido, total, inicio_item)
 
-                            agora = time.monotonic()
-                            percentual = int(recebido * 100 / total) if total else 0
-                            mostrar = (
-                                total and percentual >= ultimo_percentual + 10
-                            ) or agora - ultimo_aviso >= 5
-                            if mostrar:
-                                if total:
-                                    progresso = (
-                                        f"{percentual:3d}% "
-                                        f"({formatar_tamanho(recebido)}/{formatar_tamanho(total)})"
-                                    )
-                                    ultimo_percentual = percentual
-                                else:
-                                    progresso = formatar_tamanho(recebido)
-                                print(f"         Progresso: {progresso}", flush=True)
-                                ultimo_aviso = agora
+                self._mostrar_progresso(recebido, total, inicio_item, final=True)
 
                 temporario.replace(destino)
                 self.baixados += 1
+                self.bytes_baixados += destino.stat().st_size
                 print(
                     f"      ✅ Salvo ({formatar_tamanho(destino.stat().st_size)}): "
                     f"{destino}"
                 )
                 return True
             except Exception as e:
+                self._encerrar_linha_progresso()
                 print(f"      ❌ Erro ao baixar: {e}")
                 if tentativa < self.max_tentativas:
                     time.sleep(3)
 
         self.falhas += 1
+        self.bytes_falhos_conhecidos += ultimo_total
         print(f"      🚩 Falha definitiva depois de {self.max_tentativas} tentativas.")
         return False
 
@@ -864,6 +1014,14 @@ class GerenciadorDownloads:
         print(f"   Baixados nesta execução: {self.baixados}")
         print(f"   Já existentes: {self.existentes}")
         print(f"   Falhas: {self.falhas}")
+        print(
+            f"   Volume baixado nesta execução: {formatar_tamanho(self.bytes_baixados)}"
+        )
+        if self.inicio_downloads is not None:
+            decorrido = time.monotonic() - self.inicio_downloads
+            velocidade = self.bytes_baixados / max(decorrido, 0.001)
+            print(f"   Tempo desde o primeiro download: {formatar_duracao(decorrido)}")
+            print(f"   Velocidade média efetiva: {formatar_tamanho(int(velocidade))}/s")
 
 
 def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
@@ -894,6 +1052,7 @@ def main():
         aulas = listar_aulas(driver, curso_url)
         download_dir = criar_pasta_do_curso(pasta_base, driver, curso_id)
         gerenciador = GerenciadorDownloads(download_dir, driver, curso_url)
+        gerenciador.configurar_total_aulas(len(aulas))
         out_txt = download_dir / "links_estrategia_conteudo.txt"
 
         if args.somente_pdfs:
@@ -919,6 +1078,7 @@ def main():
                 registrar_e_baixar(item, arquivo_links, gerenciador)
 
             for posicao, aula in enumerate(aulas, start=1):
+                gerenciador.iniciar_aula(posicao)
                 num = aula["num"]
                 nome = aula["nome"]
                 href = aula["href"]
@@ -945,6 +1105,7 @@ def main():
                 for fonte in fontes:
                     for item in fonte:
                         registrar_e_baixar(item, arquivo_links, gerenciador)
+                gerenciador.concluir_aula()
 
         print(f"\n✅ Links registrados continuamente em: {out_txt}")
         gerenciador.resumo()

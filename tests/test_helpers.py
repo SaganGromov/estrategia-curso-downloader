@@ -1,4 +1,8 @@
+import io
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import estrategia_download_edge_any as app
 
@@ -10,6 +14,37 @@ class BotaoFake:
 
     def get_attribute(self, nome):
         return self.atributos.get(nome)
+
+
+class DriverFake:
+    def get_cookies(self):
+        return []
+
+    def execute_script(self, _script):
+        return "User-Agent de teste"
+
+
+class RespostaFake:
+    headers = {"Content-Length": "6", "Content-Type": "application/pdf"}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size):
+        self.chunk_size = chunk_size
+        yield b"abc"
+        yield b"def"
+
+
+class SessaoFake:
+    def get(self, *_args, **_kwargs):
+        return RespostaFake()
 
 
 class HelpersTest(unittest.TestCase):
@@ -37,6 +72,40 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(
             app.safe_filename("Aula: 01 / introdução?"), "Aula 01 introdução"
         )
+
+    def test_formata_duracao(self):
+        self.assertEqual(app.formatar_duracao(65), "01:05")
+        self.assertEqual(app.formatar_duracao(3661), "01:01:01")
+        self.assertEqual(app.formatar_duracao(None), "--:--")
+
+    def test_download_atualiza_estatisticas_cumulativas(self):
+        with TemporaryDirectory() as diretorio:
+            gerenciador = app.GerenciadorDownloads(
+                Path(diretorio), DriverFake(), "https://example.test/curso"
+            )
+            gerenciador.sessao = SessaoFake()
+            item = {
+                "tipo": "pdf",
+                "aula_num": 1,
+                "item_num": 1,
+                "titulo": "Material",
+                "extensao": ".pdf",
+                "url": "https://example.test/material.pdf",
+            }
+
+            with patch("sys.stdout", new_callable=io.StringIO) as saida:
+                self.assertTrue(gerenciador.baixar(item))
+            progresso = saida.getvalue()
+            self.assertIn("Item #1", progresso)
+            self.assertIn("Conhecido 1/1", progresso)
+            self.assertIn("/s", progresso)
+            self.assertIn("ETA", progresso)
+            self.assertEqual(gerenciador.baixados, 1)
+            self.assertEqual(gerenciador.bytes_baixados, 6)
+            self.assertEqual(
+                (Path(diretorio) / "Aula 01 - PDF 01 - Material.pdf").read_bytes(),
+                b"abcdef",
+            )
 
 
 if __name__ == "__main__":
