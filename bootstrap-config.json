@@ -1,0 +1,22 @@
+{
+  "pythonVersion": "3.12.10",
+  "pythonSeries": "3.12",
+  "publisherPattern": "Python Software Foundation",
+  "installers": {
+    "x64": {
+      "file": "python-3.12.10-amd64.exe",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe",
+      "sha256": "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb"
+    },
+    "arm64": {
+      "file": "python-3.12.10-arm64.exe",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-arm64.exe",
+      "sha256": "377ac8fd478987940088e879441e702a71b53164d2a1e6f1d51ff77a7e470258"
+    },
+    "x86": {
+      "file": "python-3.12.10.exe",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10.exe",
+      "sha256": "fdfe385b94f5b8785a0226a886979527fd26eb65defdbf29992fd22cc4b0e31e"
+    }
+  }
+}

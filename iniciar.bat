@@ -9,38 +9,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
-where py >nul 2>&1
-if errorlevel 1 (
-    echo.
-    echo ERRO: Python nao foi encontrado.
-    echo Instale o Python 3 em https://www.python.org/downloads/windows/
-    echo e marque a opcao "Add Python to PATH" durante a instalacao.
-    echo.
-    pause
-    popd
-    exit /b 1
-)
-
-py -c "import requests, selenium" >nul 2>&1
-if errorlevel 1 (
-    echo Instalando as dependencias necessarias...
-    py -m pip install -r requirements.txt
-    if errorlevel 1 (
-        echo.
-        echo ERRO: nao foi possivel instalar as dependencias.
-        pause
-        popd
-        exit /b 1
-    )
-)
-
 echo.
-echo Abrindo o painel local no Microsoft Edge...
-py estrategia_download_edge_any.py %*
+echo Iniciando a preparacao automatica...
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0bootstrap.ps1" %*
 set "CODIGO_SAIDA=%errorlevel%"
 if not "%CODIGO_SAIDA%"=="0" (
     echo.
-    echo O programa terminou com erro. Veja a mensagem acima.
+    echo Nao foi possivel iniciar. Veja a explicacao acima.
     pause
 )
 popd
