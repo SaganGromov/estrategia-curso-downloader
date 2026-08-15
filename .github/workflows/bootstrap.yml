@@ -18,11 +18,16 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      ESTRATEGIA_APP_HOME: ${{ runner.temp }}\Estrategia Bootstrap Á (2)
       ESTRATEGIA_BOOTSTRAP_NO_DIALOG: "1"
     steps:
       - name: Baixar o código
         uses: actions/checkout@v7
+
+      - name: Definir pasta privada de teste
+        shell: powershell
+        run: |
+          "ESTRATEGIA_APP_HOME=$env:RUNNER_TEMP\Estrategia Bootstrap Á (2)" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Primeira instalação privada
         shell: powershell
