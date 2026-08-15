@@ -255,7 +255,7 @@ class HelpersTest(unittest.TestCase):
                 self.assertEqual(resposta.status_code, 202)
                 configuracao = painel.aguardar_configuracao()
                 self.assertEqual(configuracao["curso_id"], "393267")
-                self.assertEqual(configuracao["pasta_base"], pasta)
+                self.assertTrue(configuracao["pasta_base"].samefile(pasta))
                 self.assertNotIn("segredo", str(painel.estado()))
             finally:
                 painel.parar()
