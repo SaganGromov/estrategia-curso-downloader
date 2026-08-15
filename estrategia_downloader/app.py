@@ -29,6 +29,8 @@ from .config import (
     LOGIN_URL,
     SELENIUM_SHORT_WAIT,
     SELENIUM_WAIT_TIMEOUT,
+    VIDEO_OPTIONS_TIMEOUT,
+    VIDEO_SELECTION_RETRIES,
     pasta_download_padrao,
 )
 from .diagnostics import criar_diagnostico
@@ -368,9 +370,23 @@ def criar_pasta_do_curso(
     return pasta_curso
 
 
-def expandir_opcoes_download(driver, alertas=None):
+def _assinatura_opcoes_video(opcoes) -> frozenset:
+    return frozenset((resolucao or 0, href) for resolucao, href in opcoes)
+
+
+def expandir_opcoes_download(driver, alertas=None, opcoes_anteriores=None):
     if alertas is not None:
         alertas.resolver_pendente(permitir_desconhecido=True)
+    # Algumas aulas já deixam as qualidades expandidas automaticamente. Nesse
+    # caso, clicar no cabeçalho fecharia justamente o painel que queremos ler.
+    opcoes_visiveis = _coletar_opcoes_video(driver)
+    assinatura_anterior = _assinatura_opcoes_video(opcoes_anteriores or [])
+    if opcoes_visiveis and (
+        not assinatura_anterior
+        or _assinatura_opcoes_video(opcoes_visiveis) != assinatura_anterior
+    ):
+        return True
+
     headers = _executar_selenium(
         alertas,
         lambda: driver.find_elements(
@@ -415,6 +431,10 @@ def _resolucao_do_botao(botao):
             botao.get_attribute("title"),
             botao.get_attribute("download"),
             botao.get_attribute("href"),
+            botao.get_attribute("data-quality"),
+            botao.get_attribute("data-resolution"),
+            botao.get_attribute("data-label"),
+            botao.get_attribute("value"),
         )
         if valor
     )
@@ -425,6 +445,149 @@ def _resolucao_do_botao(botao):
         if re.search(rf"\b{rotulo}\b", texto, re.IGNORECASE):
             resolucoes.append(altura)
     return max(resolucoes) if resolucoes else None
+
+
+def _coletar_opcoes_video(driver):
+    """Lê URLs de vídeo expostas como href ou atributos data-* visíveis."""
+    elementos = driver.find_elements(
+        By.CSS_SELECTOR,
+        "a[href], [data-href], [data-url], [data-download-url], "
+        "[data-file-url], [data-video-url], [data-src], [data-download], "
+        "button[data-quality], button[data-resolution], button[onclick], "
+        "[role='button'][onclick]",
+    )
+    opcoes = []
+    vistos = set()
+    for elemento in elementos:
+        try:
+            if not elemento.is_displayed():
+                continue
+            href = _url_do_elemento(elemento, driver.current_url)
+            if (
+                not href
+                or urlparse(href).scheme not in {"http", "https"}
+                or href in vistos
+            ):
+                continue
+            resolucao = _resolucao_do_botao(elemento)
+            descricao = normalizar_texto(_texto_link(elemento))
+            parece_video = bool(
+                re.search(r"\.mp4(?:$|[?#])", href, re.IGNORECASE)
+                or resolucao
+                or (
+                    ("video" in descricao or "qualidade" in descricao)
+                    and ("baixar" in descricao or "download" in descricao)
+                )
+            )
+            if not parece_video:
+                continue
+            vistos.add(href)
+            opcoes.append((resolucao, href))
+        except (NoSuchElementException, StaleElementReferenceException):
+            continue
+    return opcoes
+
+
+def _aguardar_opcoes_video(
+    driver,
+    alertas=None,
+    timeout=VIDEO_OPTIONS_TIMEOUT,
+    opcoes_anteriores=None,
+):
+    assinatura_anterior = _assinatura_opcoes_video(opcoes_anteriores or [])
+
+    def opcoes_atualizadas(navegador):
+        opcoes = _coletar_opcoes_video(navegador)
+        if not opcoes:
+            return False
+        if (
+            assinatura_anterior
+            and _assinatura_opcoes_video(opcoes) == assinatura_anterior
+        ):
+            return False
+        return opcoes
+
+    return _executar_selenium(
+        alertas,
+        lambda: WebDriverWait(driver, timeout, poll_frequency=0.25).until(
+            opcoes_atualizadas
+        ),
+        "aguardar os links de qualidade do vídeo selecionado",
+    )
+
+
+def _selecionar_video_e_obter_opcoes(driver, indice: int, alertas=None):
+    titulo_video = f"video_{indice + 1}"
+    opcoes_antes_da_selecao = _coletar_opcoes_video(driver) if indice else []
+    for tentativa in range(1, VIDEO_SELECTION_RETRIES + 1):
+        if alertas is not None:
+            alertas.resolver_pendente(permitir_desconhecido=True)
+        videos = _executar_selenium(
+            alertas,
+            lambda: driver.find_elements(By.CSS_SELECTOR, "span.VideoItem-info-title"),
+            "reler vídeos da aula",
+        )
+        if indice >= len(videos):
+            return titulo_video, []
+
+        vid_el = videos[indice]
+        titulo_video = (vid_el.text or titulo_video).strip()
+        _executar_selenium(
+            alertas,
+            lambda elemento=vid_el: driver.execute_script(
+                "arguments[0].scrollIntoView({block:'center'});", elemento
+            ),
+            "posicionar o vídeo na tela",
+        )
+        try:
+            clickable = vid_el.find_element(By.XPATH, "ancestor::a[1]")
+        except NoSuchElementException:
+            try:
+                clickable = vid_el.find_element(By.XPATH, "ancestor::button[1]")
+            except NoSuchElementException:
+                clickable = vid_el
+
+        def clicar_video(elemento=clickable):
+            try:
+                elemento.click()
+            except (
+                ElementClickInterceptedException,
+                ElementNotInteractableException,
+            ):
+                driver.execute_script("arguments[0].click();", elemento)
+
+        _executar_selenium(alertas, clicar_video, "selecionar o vídeo")
+        try:
+            _executar_selenium(
+                alertas,
+                lambda: WebDriverWait(driver, SELENIUM_SHORT_WAIT).until(
+                    EC.presence_of_element_located(
+                        (
+                            By.XPATH,
+                            "//strong[contains(normalize-space(.),"
+                            "'Opções de download')]",
+                        )
+                    )
+                ),
+                "aguardar opções do vídeo selecionado",
+            )
+            if not expandir_opcoes_download(driver, alertas, opcoes_antes_da_selecao):
+                raise TimeoutException("painel de opções não apareceu")
+            return titulo_video, _aguardar_opcoes_video(
+                driver,
+                alertas,
+                opcoes_anteriores=opcoes_antes_da_selecao,
+            )
+        except TimeoutException:
+            if tentativa < VIDEO_SELECTION_RETRIES:
+                print(
+                    f"      ↪️ Vídeo {indice + 1:02d}: as qualidades ainda "
+                    f"não apareceram; tentando novamente "
+                    f"({tentativa + 1}/{VIDEO_SELECTION_RETRIES})."
+                )
+                continue
+            return titulo_video, []
+    return titulo_video, []
 
 
 def iterar_videos_da_aula_atual(driver, aula_num: int, aula_nome: str, alertas=None):
@@ -459,115 +622,29 @@ def iterar_videos_da_aula_atual(driver, aula_num: int, aula_nome: str, alertas=N
 
     for idx in range(total):
         try:
-            if alertas is not None:
-                alertas.resolver_pendente(permitir_desconhecido=True)
-            videos = _executar_selenium(
-                alertas,
-                lambda: driver.find_elements(
-                    By.CSS_SELECTOR, "span.VideoItem-info-title"
-                ),
-                "reler vídeos da aula",
+            titulo_video, opcoes = _selecionar_video_e_obter_opcoes(
+                driver, idx, alertas
             )
-            if idx >= len(videos):
-                break
-
-            vid_el = videos[idx]
-            titulo_video = (vid_el.text or f"video_{idx + 1}").strip()
-
-            _executar_selenium(
-                alertas,
-                lambda: driver.execute_script(
-                    "arguments[0].scrollIntoView({block:'center'});", vid_el
-                ),
-                "posicionar o vídeo na tela",
-            )
-
-            try:
-                clickable = vid_el.find_element(By.XPATH, "ancestor::a[1]")
-            except NoSuchElementException:
-                try:
-                    clickable = vid_el.find_element(By.XPATH, "ancestor::button[1]")
-                except NoSuchElementException:
-                    clickable = vid_el
-
-            def clicar_video():
-                try:
-                    clickable.click()
-                except (
-                    ElementClickInterceptedException,
-                    ElementNotInteractableException,
-                ):
-                    driver.execute_script("arguments[0].click();", clickable)
-
-            _executar_selenium(alertas, clicar_video, "selecionar o vídeo")
-            _executar_selenium(
-                alertas,
-                lambda: WebDriverWait(driver, SELENIUM_SHORT_WAIT).until(
-                    EC.presence_of_element_located(
-                        (
-                            By.XPATH,
-                            "//strong[contains(normalize-space(.),"
-                            "'Opções de download')]",
-                        )
-                    )
-                ),
-                "aguardar opções do vídeo selecionado",
-            )
-
-            ok = expandir_opcoes_download(driver, alertas)
-            if not ok:
-                print(
-                    f"      ⚠️ Vídeo {idx + 1:02d}: não consegui abrir "
-                    "'Opções de download'"
-                )
-                continue
-
-            candidatos = []
-            links_sem_resolucao = []
-            botoes_download = _executar_selenium(
-                alertas,
-                lambda: driver.find_elements(By.CSS_SELECTOR, "a[href]"),
-                "ler links de qualidade do vídeo",
-            )
-            for botao in botoes_download:
-                if not botao.is_displayed():
-                    continue
-                href_botao = botao.get_attribute("href") or ""
-                resolucao = _resolucao_do_botao(botao)
-                if resolucao:
-                    candidatos.append((resolucao, botao))
-                    continue
-
-                descricao = " ".join(
-                    filter(None, [botao.text, botao.get_attribute("aria-label")])
-                ).lower()
-                if re.search(r"\.mp4(?:$|[?#])", href_botao, re.IGNORECASE) or (
-                    "vídeo" in descricao
-                    and ("baixar" in descricao or "download" in descricao)
-                ):
-                    links_sem_resolucao.append(botao)
+            candidatos = [(resolucao, href) for resolucao, href in opcoes if resolucao]
+            links_sem_resolucao = [href for resolucao, href in opcoes if not resolucao]
 
             if candidatos:
-                resolucao_escolhida, botao_escolhido = max(
-                    candidatos, key=lambda item: item[0]
-                )
+                resolucao_escolhida, href = max(candidatos, key=lambda item: item[0])
                 print(
                     f"      🎞️ Vídeo {idx + 1:02d}: melhor qualidade disponível: "
                     f"{resolucao_escolhida}p."
                 )
             elif links_sem_resolucao:
-                botao_escolhido = links_sem_resolucao[0]
+                href = links_sem_resolucao[0]
                 print(
                     f"      ℹ️ Vídeo {idx + 1:02d}: usando o link disponível; "
                     "a resolução não foi informada."
                 )
             else:
-                print(f"      ⚠️ Vídeo {idx + 1:02d}: nenhum link de download apareceu")
-                continue
-
-            href = botao_escolhido.get_attribute("href")
-            if not href:
-                print(f"      ⚠️ Vídeo {idx + 1:02d}: botão de download sem href")
+                print(
+                    f"      ⚠️ Vídeo {idx + 1:02d}: nenhum link de download "
+                    f"apareceu após {VIDEO_SELECTION_RETRIES} tentativas."
+                )
                 continue
 
             base_title = safe_filename(titulo_video)
@@ -607,6 +684,8 @@ def _texto_link(elemento) -> str:
         elemento.get_attribute("title"),
         elemento.get_attribute("aria-label"),
         elemento.get_attribute("data-original-title"),
+        elemento.get_attribute("data-label"),
+        elemento.get_attribute("class"),
         elemento.get_attribute("type"),
     ]
     return " ".join(str(parte).strip() for parte in partes if parte).strip()
@@ -629,6 +708,9 @@ def _url_do_elemento(elemento, url_atual: str) -> str:
         "data-url",
         "data-download-url",
         "data-file-url",
+        "data-video-url",
+        "data-src",
+        "data-download",
     )
 
     def procurar_atributos(alvo):

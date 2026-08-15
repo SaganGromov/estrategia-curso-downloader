@@ -10,12 +10,56 @@ from interface_web import InterfaceWeb, extrair_id_interface
 
 
 class BotaoFake:
-    def __init__(self, texto="", atributos=None):
+    def __init__(self, texto="", atributos=None, visivel=True):
         self.text = texto
         self.atributos = atributos or {}
+        self.visivel = visivel
 
     def get_attribute(self, nome):
         return self.atributos.get(nome)
+
+    def is_displayed(self):
+        return self.visivel
+
+
+class DriverOpcoesAtrasadasFake:
+    current_url = "https://example.test/aula"
+
+    def __init__(self):
+        self.consultas = 0
+        self.opcoes = [
+            BotaoFake(
+                "Baixar",
+                {
+                    "data-download-url": "/video-480.mp4",
+                    "data-quality": "480p",
+                },
+            ),
+            BotaoFake(
+                "Download do vídeo",
+                {
+                    "data-url": "/video-1080.mp4?Signature=segredo",
+                    "data-resolution": "1080p",
+                },
+            ),
+        ]
+
+    def find_elements(self, *_args):
+        self.consultas += 1
+        return [] if self.consultas < 3 else self.opcoes
+
+
+class DriverOpcoesTrocadasFake:
+    current_url = "https://example.test/aula"
+
+    def __init__(self):
+        self.consultas = 0
+        self.anterior = BotaoFake("Baixar 720p", {"href": "/video-anterior-720.mp4"})
+        self.atual = BotaoFake("Baixar 1080p", {"href": "/video-atual-1080.mp4"})
+
+    def find_elements(self, *_args):
+        self.consultas += 1
+        return [self.anterior] if self.consultas < 3 else [self.atual]
 
 
 class DriverFake:
@@ -127,6 +171,28 @@ class HelpersTest(unittest.TestCase):
 
     def test_detecta_qualidade_4k(self):
         self.assertEqual(app._resolucao_do_botao(BotaoFake("Download 4K")), 2160)
+
+    def test_opcoes_de_video_aceitam_data_attributes(self):
+        driver = DriverOpcoesAtrasadasFake()
+        driver.consultas = 2
+        opcoes = app._coletar_opcoes_video(driver)
+        self.assertEqual(max(opcoes)[0], 1080)
+        self.assertIn("video-1080.mp4", max(opcoes)[1])
+
+    def test_aguarda_links_reais_quando_opcoes_atrasam(self):
+        driver = DriverOpcoesAtrasadasFake()
+        opcoes = app._aguardar_opcoes_video(driver, timeout=2)
+        self.assertEqual(driver.consultas, 3)
+        self.assertEqual({resolucao for resolucao, _url in opcoes}, {480, 1080})
+
+    def test_aguarda_links_do_novo_video_em_vez_dos_anteriores(self):
+        driver = DriverOpcoesTrocadasFake()
+        anteriores = app._coletar_opcoes_video(driver)
+        opcoes = app._aguardar_opcoes_video(
+            driver, timeout=2, opcoes_anteriores=anteriores
+        )
+        self.assertEqual(opcoes[0][0], 1080)
+        self.assertIn("video-atual", opcoes[0][1])
 
     def test_classifica_livro_eletronico_simplificado_como_pdf(self):
         descricao = "Baixar Livro Eletrônico versão simplificada"
