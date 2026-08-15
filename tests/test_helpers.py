@@ -361,7 +361,12 @@ class HelpersTest(unittest.TestCase):
             self.assertEqual(gerenciador.baixados, 1)
             self.assertEqual(gerenciador.bytes_baixados, 6)
             self.assertEqual(
-                (Path(diretorio) / "Aula 01 - PDF 01 - Material.pdf").read_bytes(),
+                (
+                    Path(diretorio)
+                    / "aula_01"
+                    / "pdfs"
+                    / "PDF 01 - Material.pdf"
+                ).read_bytes(),
                 b"abcdef",
             )
 

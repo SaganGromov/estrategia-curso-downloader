@@ -923,6 +923,11 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
             download_dir, driver, curso_url, painel=painel
         )
         gerenciador.configurar_total_aulas(len(aulas))
+        # A estrutura é previsível mesmo para aulas sem um determinado tipo de
+        # conteúdo. ``aula_00`` também abriga os materiais gerais do curso.
+        gerenciador.preparar_aula(0)
+        for aula in aulas:
+            gerenciador.preparar_aula(aula["num"])
         out_txt = download_dir / "links_estrategia_conteudo.txt"
 
         modo_reduzido = configuracao["modo_reduzido"]

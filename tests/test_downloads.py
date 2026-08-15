@@ -81,15 +81,26 @@ class Cancelado(Exception):
     pass
 
 
-def item(url="https://arquivos.example/material.pdf?signature=secreta"):
-    return {
+def item(url="https://arquivos.example/material.pdf?signature=secreta", **alteracoes):
+    dados = {
         "tipo": "pdf",
         "aula_num": 1,
+        "aula_nome": "Aula 01",
         "item_num": 1,
         "titulo": "Material",
         "extensao": ".pdf",
         "url": url,
     }
+    dados.update(alteracoes)
+    return dados
+
+
+def caminho_pdf(pasta, *, parcial=False):
+    caminho = Path(pasta) / "aula_01" / "pdfs" / "PDF 01 - Material.pdf"
+    if parcial:
+        caminho = caminho.with_suffix(".pdf.part")
+        caminho.parent.mkdir(parents=True, exist_ok=True)
+    return caminho
 
 
 class DownloadsResumeTest(unittest.TestCase):
@@ -105,14 +116,11 @@ class DownloadsResumeTest(unittest.TestCase):
             gerenciador = self.criar(pasta, [RespostaFake(CONTEUDO)])
             with patch("sys.stdout", new_callable=io.StringIO):
                 self.assertTrue(gerenciador.baixar(item()))
-            self.assertEqual(
-                (Path(pasta) / "Aula 01 - PDF 01 - Material.pdf").read_bytes(),
-                CONTEUDO,
-            )
+            self.assertEqual(caminho_pdf(pasta).read_bytes(), CONTEUDO)
 
     def test_retomada_206_anexa_no_offset_correto(self):
         with TemporaryDirectory() as pasta:
-            parcial = Path(pasta) / "Aula 01 - PDF 01 - Material.pdf.part"
+            parcial = caminho_pdf(pasta, parcial=True)
             parcial.write_bytes(CONTEUDO[:4])
             resposta = RespostaFake(
                 CONTEUDO[4:],
@@ -140,7 +148,7 @@ class DownloadsResumeTest(unittest.TestCase):
 
     def test_servidor_ignora_range_e_reinicia_do_zero(self):
         with TemporaryDirectory() as pasta:
-            parcial = Path(pasta) / "Aula 01 - PDF 01 - Material.pdf.part"
+            parcial = caminho_pdf(pasta, parcial=True)
             parcial.write_bytes(b"lixo")
             gerenciador = self.criar(pasta, [RespostaFake(CONTEUDO)])
             with patch("sys.stdout", new_callable=io.StringIO):
@@ -149,7 +157,7 @@ class DownloadsResumeTest(unittest.TestCase):
 
     def test_content_range_errado_nao_corrompe_parcial(self):
         with TemporaryDirectory() as pasta:
-            parcial = Path(pasta) / "Aula 01 - PDF 01 - Material.pdf.part"
+            parcial = caminho_pdf(pasta, parcial=True)
             parcial.write_bytes(CONTEUDO[:4])
             resposta = RespostaFake(
                 CONTEUDO[4:],
@@ -166,7 +174,7 @@ class DownloadsResumeTest(unittest.TestCase):
 
     def test_nova_interrupcao_preserva_parcial_valido(self):
         with TemporaryDirectory() as pasta:
-            parcial = Path(pasta) / "Aula 01 - PDF 01 - Material.pdf.part"
+            parcial = caminho_pdf(pasta, parcial=True)
             parcial.write_bytes(CONTEUDO[:4])
             resposta = RespostaFake(
                 CONTEUDO[4:],
@@ -184,7 +192,8 @@ class DownloadsResumeTest(unittest.TestCase):
 
     def test_arquivo_completo_existente_e_pulado(self):
         with TemporaryDirectory() as pasta:
-            destino = Path(pasta) / "Aula 01 - PDF 01 - Material.pdf"
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
             destino.write_bytes(CONTEUDO)
             gerenciador = self.criar(pasta, [])
             with patch("sys.stdout", new_callable=io.StringIO):
@@ -194,7 +203,7 @@ class DownloadsResumeTest(unittest.TestCase):
 
     def test_cancelamento_em_retomada_preserva_bytes_recebidos(self):
         with TemporaryDirectory() as pasta:
-            parcial = Path(pasta) / "Aula 01 - PDF 01 - Material.pdf.part"
+            parcial = caminho_pdf(pasta, parcial=True)
             parcial.write_bytes(CONTEUDO[:4])
             resposta = RespostaFake(
                 CONTEUDO[4:],
@@ -210,6 +219,69 @@ class DownloadsResumeTest(unittest.TestCase):
                 with self.assertRaises(Cancelado):
                     gerenciador.baixar(item())
             self.assertEqual(parcial.read_bytes(), CONTEUDO[:7])
+
+    def test_prepara_videos_e_pdfs_para_cada_aula(self):
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(pasta, [])
+            for numero in (0, 1, 12):
+                gerenciador.preparar_aula(numero)
+                raiz = Path(pasta) / f"aula_{numero:02d}"
+                self.assertTrue((raiz / "videos").is_dir())
+                self.assertTrue((raiz / "pdfs").is_dir())
+
+    def test_organiza_video_pdf_e_anexo_em_subpastas(self):
+        respostas = [
+            RespostaFake(
+                CONTEUDO,
+                headers={"Content-Type": "video/mp4", "Content-Length": "10"},
+            ),
+            RespostaFake(CONTEUDO),
+            RespostaFake(
+                CONTEUDO,
+                headers={
+                    "Content-Type": "application/zip",
+                    "Content-Length": "10",
+                },
+            ),
+        ]
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(pasta, respostas)
+            itens = [
+                item(
+                    "https://arquivos.example/video.mp4",
+                    tipo="video",
+                    aula_num=0,
+                    titulo="Introdução",
+                    extensao=".mp4",
+                ),
+                item(
+                    "https://arquivos.example/slides.pdf",
+                    tipo="slides",
+                    aula_num=0,
+                    item_num=2,
+                    titulo="Apresentação",
+                ),
+                item(
+                    "https://arquivos.example/anexo.zip",
+                    tipo="material",
+                    aula_num=0,
+                    item_num=3,
+                    titulo="Arquivos",
+                    extensao=".zip",
+                ),
+            ]
+            with patch("sys.stdout", new_callable=io.StringIO):
+                for conteudo in itens:
+                    self.assertTrue(gerenciador.baixar(conteudo))
+
+            aula = Path(pasta) / "aula_00"
+            self.assertTrue((aula / "videos" / "Vídeo 01 - Introdução.mp4").is_file())
+            self.assertTrue(
+                (aula / "pdfs" / "Slides 02 - Apresentação.pdf").is_file()
+            )
+            self.assertTrue(
+                (aula / "outros_materiais" / "Material 03 - Arquivos.zip").is_file()
+            )
 
 
 if __name__ == "__main__":

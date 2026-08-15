@@ -143,7 +143,7 @@ class GerenciadorDownloads:
         self.download_dir = download_dir
         self.sessao = criar_sessao_download(driver, curso_url)
         self.max_tentativas = max_tentativas
-        self.nomes_globais = {}
+        self.nomes_por_diretorio = {}
         self.urls_processadas = set()
         self.encontrados = 0
         self.baixados = 0
@@ -315,7 +315,32 @@ class GerenciadorDownloads:
             print()
             self._progresso_ativo = False
 
-    def _nome_destino(self, item) -> str:
+    @staticmethod
+    def _nome_pasta_aula(aula_num: int) -> str:
+        return f"aula_{max(int(aula_num), 0):02d}"
+
+    def preparar_aula(self, aula_num: int) -> Path:
+        """Cria a estrutura mínima de uma aula, mesmo quando ela está vazia."""
+        pasta_aula = self.download_dir / self._nome_pasta_aula(aula_num)
+        (pasta_aula / "videos").mkdir(parents=True, exist_ok=True)
+        (pasta_aula / "pdfs").mkdir(parents=True, exist_ok=True)
+        return pasta_aula
+
+    def _diretorio_destino(self, item) -> Path:
+        pasta_aula = self.preparar_aula(item["aula_num"])
+        tipo = item["tipo"]
+        extensao = str(item["extensao"]).lower()
+        if tipo == "video":
+            subpasta = "videos"
+        elif tipo in {"pdf", "slides", "mapa_mental"} or extensao == ".pdf":
+            subpasta = "pdfs"
+        else:
+            subpasta = "outros_materiais"
+        destino = pasta_aula / subpasta
+        destino.mkdir(parents=True, exist_ok=True)
+        return destino
+
+    def _nome_destino(self, item, diretorio: Path) -> str:
         tipo_nome = {
             "video": "Vídeo",
             "pdf": "PDF",
@@ -323,15 +348,21 @@ class GerenciadorDownloads:
             "mapa_mental": "Mapa Mental",
             "material": "Material",
         }.get(item["tipo"], "Material")
-        origem = "Curso" if item["aula_num"] == 0 else f"Aula {item['aula_num']:02d}"
         base = safe_filename(
-            f"{origem} - {tipo_nome} {item['item_num']:02d} - {item['titulo']}"
+            f"{tipo_nome} {item['item_num']:02d} - {item['titulo']}"
         )
-        quantidade = self.nomes_globais.get(base, 0) + 1
-        self.nomes_globais[base] = quantidade
+        chave_nome = (diretorio, base)
+        quantidade = self.nomes_por_diretorio.get(chave_nome, 0) + 1
+        self.nomes_por_diretorio[chave_nome] = quantidade
         if quantidade > 1:
             base = f"{base} ({quantidade})"
         return f"{base}{item['extensao']}"
+
+    def _nome_relativo(self, caminho: Path) -> str:
+        try:
+            return str(caminho.relative_to(self.download_dir))
+        except ValueError:
+            return caminho.name
 
     def _preparar_resposta(self, resposta, parcial: int):
         """Retorna (modo, total, offset), sem jamais anexar um 200 completo."""
@@ -375,10 +406,11 @@ class GerenciadorDownloads:
             return False
         self.urls_processadas.add(chave)
         self.encontrados += 1
-        final_name = self._nome_destino(item)
-        self._item_atual = final_name
+        diretorio = self._diretorio_destino(item)
+        final_name = self._nome_destino(item, diretorio)
+        destino = diretorio / final_name
+        self._item_atual = self._nome_relativo(destino)
         self._sincronizar_contadores()
-        destino = self.download_dir / final_name
         temporario = destino.with_suffix(destino.suffix + ".part")
         metadados_path = temporario.with_suffix(temporario.suffix + ".json")
 
@@ -387,7 +419,7 @@ class GerenciadorDownloads:
             self.existentes += 1
             self.bytes_existentes += tamanho
             self._sincronizar_contadores()
-            print(f"      ⏭️ Já existe: {final_name}")
+            print(f"      ⏭️ Já existe: {self._nome_relativo(destino)}")
             return True
 
         ultimo_total = 0
@@ -403,7 +435,8 @@ class GerenciadorDownloads:
                         metadados.get("etag") or metadados["last_modified"]
                     )
             print(
-                f"      ⬇️ Arquivo encontrado #{self.encontrados}: {final_name} "
+                f"      ⬇️ Arquivo encontrado #{self.encontrados}: "
+                f"{self._nome_relativo(destino)} "
                 f"(tentativa {tentativa}/{self.max_tentativas}"
                 f"{f', retomando de {formatar_tamanho(parcial)}' if parcial else ''})",
                 flush=True,
@@ -439,9 +472,9 @@ class GerenciadorDownloads:
                                 temporario.suffix + ".json"
                             )
                             final_name = destino.name
-                            self._item_atual = final_name
+                            self._item_atual = self._nome_relativo(destino)
                         restante = max(total - offset, 0) if total else 0
-                        livre = espaco_disponivel(self.download_dir)
+                        livre = espaco_disponivel(destino.parent)
                         if restante and livre < restante + DISK_SAFETY_MARGIN:
                             raise EspacoInsuficienteError(livre, restante)
                         _gravar_metadados(metadados_path, resposta, total)

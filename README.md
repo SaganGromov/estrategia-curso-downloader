@@ -104,7 +104,23 @@ Exemplo:
 
 ```text
 CURSO_ESTRATEGIA_393267_1723680000
+├── aula_00
+│   ├── videos
+│   └── pdfs
+├── aula_01
+│   ├── videos
+│   └── pdfs
+├── aula_02
+│   ├── videos
+│   └── pdfs
+└── links_estrategia_conteudo.txt
 ```
+
+Cada aula recebe suas próprias pastas `videos` e `pdfs`, inclusive a
+`aula_00`. PDFs, slides e mapas mentais ficam em `pdfs`. Anexos que não sejam
+vídeos nem documentos PDF ficam em `outros_materiais`, criada somente quando
+necessária. Assim, os arquivos de uma aula não ficam misturados com os das
+demais.
 
 Essa convenção é intencional. Falhas transitórias durante a mesma execução retomam o `.part` com HTTP `Range` quando o servidor permite. Se o servidor ignorar a faixa, o arquivo é reiniciado com segurança; uma resposta inconsistente nunca é anexada cegamente.
 
