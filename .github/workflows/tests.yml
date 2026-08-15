@@ -28,7 +28,10 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1 --validate-bootstrap
 
       - name: Validar sintaxe
-        run: python -m py_compile estrategia_download_edge_any.py interface_web.py
+        run: python -m compileall -q estrategia_download_edge_any.py interface_web.py estrategia_downloader
+
+      - name: Validar JavaScript
+        run: node --check interface/app.js
 
       - name: Executar testes
         run: python -m unittest discover -s tests -v

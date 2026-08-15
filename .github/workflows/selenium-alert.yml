@@ -1,0 +1,23 @@
+name: Integração do alerta no Edge
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  alerta-edge:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.10"
+      - run: python -m pip install -r requirements.lock.txt
+      - name: Executar regressão com Edge real
+        env:
+          ESTRATEGIA_SELENIUM_INTEGRATION: "1"
+        run: python -m unittest discover -s tests -p test_alert_integration.py -v

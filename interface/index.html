@@ -45,13 +45,26 @@
             <label class="wide">
               <span>ID ou URL do curso</span>
               <input id="course" type="text" required placeholder="393267 ou a URL completa do curso">
+              <small id="courseFeedback" class="field-feedback"></small>
             </label>
+            <fieldset class="wide mode-selection">
+              <legend>O que você quer baixar?</legend>
+              <label class="mode-option">
+                <input type="radio" name="mode" value="completo">
+                <span><strong>Conteúdo completo</strong><small>Vídeos, PDFs, slides, mapas mentais e outros materiais.</small></span>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="mode" value="reduzido">
+                <span><strong>Materiais de estudo</strong><small>PDFs, slides e mapas mentais, sem vídeos.</small></span>
+              </label>
+            </fieldset>
             <div class="wide">
               <span class="field-label">Pasta-base de destino</span>
               <div class="folder-row">
                 <div id="folderPath" class="folder-path">Nenhuma pasta selecionada</div>
-                <button id="selectFolder" class="secondary-button" type="button">Escolher pasta…</button>
+                <button id="selectFolder" class="secondary-button" type="button">Alterar pasta…</button>
               </div>
+              <small id="freeSpace" class="field-feedback"></small>
             </div>
           </div>
           <p id="formError" class="form-error" role="alert"></p>
@@ -72,14 +85,18 @@
             <div>
               <p class="eyebrow">STATUS</p>
               <h2 id="phase">Preparando…</h2>
+              <p id="phaseInstruction" class="phase-instruction"></p>
             </div>
           </div>
           <span id="modeDashboard" class="mode-badge"></span>
         </div>
 
+        <div id="warning" class="warning-card hidden" role="status"></div>
+
         <div class="metrics">
           <article class="metric card"><span>Arquivos encontrados</span><strong id="found">0</strong></article>
           <article class="metric card"><span>Baixados</span><strong id="downloaded">0</strong></article>
+          <article class="metric card"><span>Já existentes</span><strong id="existing">0</strong></article>
           <article class="metric card"><span>Aula</span><strong id="lesson">0 / 0</strong></article>
           <article class="metric card"><span>Falhas</span><strong id="failed">0</strong></article>
         </div>
@@ -98,12 +115,12 @@
 
           <article class="card progress-card">
             <div class="card-title-row">
-              <div><p class="eyebrow">TOTAL CONHECIDO</p><h3 id="totalSize">0 B / ?</h3></div>
+              <div><p class="eyebrow">ARQUIVOS JÁ ENCONTRADOS</p><h3 id="totalSize">0 B / ?</h3></div>
               <strong id="totalPercent">0%</strong>
             </div>
             <div class="progress-track total-track"><div id="totalBar" class="progress-fill"></div></div>
             <div class="progress-details">
-              <span id="totalSpeed">0 B/s</span><span>ETA conhecido <b id="knownEta">calculando</b></span><span>Curso <b id="courseEta">calculando</b></span>
+              <span id="totalSpeed">0 B/s</span><span>ETA conhecido <b id="knownEta">calculando</b></span><span>Curso aprox. <b id="courseEta">calculando</b></span>
             </div>
           </article>
         </div>
@@ -111,6 +128,18 @@
         <article class="card destination-card">
           <div><p class="eyebrow">DESTINO DESTA EXECUÇÃO</p><p id="destination">A pasta será criada após o login</p></div>
           <button id="openFolder" class="secondary-button" type="button" disabled>Abrir pasta</button>
+        </article>
+
+        <article id="summaryCard" class="card summary-card hidden">
+          <div class="card-title-row"><div><p class="eyebrow">RESUMO FINAL</p><h3>Execução encerrada</h3></div></div>
+          <div class="summary-grid">
+            <span>Encontrados <b id="summaryFound">0</b></span>
+            <span>Baixados <b id="summaryDownloaded">0</b></span>
+            <span>Já existentes <b id="summaryExisting">0</b></span>
+            <span>Falhas <b id="summaryFailed">0</b></span>
+            <span>Volume concluído <b id="summaryBytes">0 B</b></span>
+            <span>Tempo total <b id="summaryElapsed">--:--</b></span>
+          </div>
         </article>
 
         <article class="card log-card">
@@ -121,6 +150,8 @@
         <p id="dashboardError" class="form-error" role="alert"></p>
         <div class="dashboard-actions">
           <button id="cancelButton" class="danger-button" type="button">Cancelar download</button>
+          <button id="toggleDetails" class="secondary-button" type="button">Ocultar detalhes</button>
+          <button id="copyDiagnostic" class="secondary-button hidden" type="button">Copiar diagnóstico</button>
           <button id="shutdownButton" class="primary-button hidden" type="button">Encerrar interface</button>
         </div>
       </section>

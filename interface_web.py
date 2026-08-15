@@ -12,6 +12,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from estrategia_downloader.utils import (
+    formatar_tamanho,
+    sanitizar_texto,
+    verificar_destino,
+)
+
 
 class DownloadCancelado(Exception):
     """Interrupção cooperativa solicitada pela interface local."""
@@ -100,11 +106,13 @@ class InterfaceWeb:
         self._senha_inicial = senha_inicial
         self.curso_inicial = curso_inicial
         self.token = secrets.token_urlsafe(32)
+        self._sessao_web = secrets.token_urlsafe(32)
         self._lock = threading.RLock()
         self._configuracao = queue.Queue(maxsize=1)
         self._encerrar = threading.Event()
         self._cancelar = threading.Event()
         self._pasta_selecionada = None
+        self._diagnostico = ""
         self._servidor = None
         self._thread = None
         self._assets = Path(__file__).resolve().parent / "interface"
@@ -114,10 +122,12 @@ class InterfaceWeb:
             "modo": (
                 "PDFs, slides e mapas mentais" if modo_reduzido else "Conteúdo completo"
             ),
+            "modo_reduzido": modo_reduzido,
             "email_inicial": email_inicial,
             "curso_inicial": curso_inicial,
             "pasta_base": "",
             "pasta_destino": "",
+            "espaco_disponivel": "calculando",
             "aula_atual": 0,
             "total_aulas": 0,
             "encontrados": 0,
@@ -144,7 +154,15 @@ class InterfaceWeb:
             },
             "logs": [],
             "erro": "",
+            "aviso": "",
+            "instrucao_login": "",
+            "resumo": {},
+            "diagnostico_disponivel": False,
         }
+        try:
+            self._definir_pasta(pasta_inicial)
+        except (OSError, RuntimeError) as erro:
+            self._estado["erro"] = str(erro)
 
     def iniciar(self) -> str:
         if not (self._assets / "index.html").is_file():
@@ -158,13 +176,23 @@ class InterfaceWeb:
 
             def _autorizado(self):
                 consulta = parse_qs(urlparse(self.path).query)
+                cookies = {}
+                for parte in (self.headers.get("Cookie") or "").split(";"):
+                    if "=" in parte:
+                        nome, valor = parte.strip().split("=", 1)
+                        cookies[nome] = valor
                 recebido = (
                     self.headers.get("X-Interface-Token")
                     or (consulta.get("token", [""])[0])
+                    or cookies.get("ECDSESSION", "")
                 )
-                return secrets.compare_digest(recebido, interface.token)
+                return secrets.compare_digest(recebido, interface.token) or (
+                    secrets.compare_digest(recebido, interface._sessao_web)
+                )
 
-            def _cabecalhos(self, status, tipo="application/json; charset=utf-8"):
+            def _cabecalhos(
+                self, status, tipo="application/json; charset=utf-8", extras=None
+            ):
                 self.send_response(status)
                 self.send_header("Content-Type", tipo)
                 self.send_header("Cache-Control", "no-store")
@@ -175,6 +203,8 @@ class InterfaceWeb:
                     "default-src 'self'; script-src 'self'; style-src 'self'; "
                     "connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
                 )
+                for nome, valor in extras or []:
+                    self.send_header(nome, valor)
                 self.end_headers()
 
             def _json(self, status, dados):
@@ -190,6 +220,7 @@ class InterfaceWeb:
 
             def do_GET(self):
                 caminho = urlparse(self.path).path
+                consulta = parse_qs(urlparse(self.path).query)
                 arquivos = {
                     "/": ("index.html", "text/html; charset=utf-8"),
                     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
@@ -204,11 +235,34 @@ class InterfaceWeb:
                     self._cabecalhos(200, tipo)
                     self.wfile.write(conteudo)
                     return
+                token_bootstrap = consulta.get("token", [""])[0]
+                if caminho == "/" and secrets.compare_digest(
+                    token_bootstrap, interface.token
+                ):
+                    self._cabecalhos(
+                        303,
+                        extras=[
+                            ("Location", "/"),
+                            (
+                                "Set-Cookie",
+                                "ECDSESSION="
+                                f"{interface._sessao_web}; HttpOnly; SameSite=Strict; "
+                                "Path=/",
+                            ),
+                        ],
+                    )
+                    return
                 if not self._autorizado():
                     self._json(403, {"erro": "Acesso local não autorizado."})
                     return
                 if caminho == "/api/state":
                     self._json(200, interface.estado())
+                    return
+                if caminho == "/api/diagnostic":
+                    if not interface._diagnostico:
+                        self._json(404, {"erro": "Diagnóstico ainda indisponível."})
+                    else:
+                        self._json(200, {"diagnostico": interface._diagnostico})
                     return
                 if caminho not in arquivos:
                     self._json(404, {"erro": "Recurso não encontrado."})
@@ -222,6 +276,9 @@ class InterfaceWeb:
                 caminho = urlparse(self.path).path
                 if not self._autorizado():
                     self._json(403, {"erro": "Acesso local não autorizado."})
+                    return
+                if self.headers.get("X-Estrategia-Request") != "1":
+                    self._json(403, {"erro": "Requisição local inválida."})
                     return
                 try:
                     if caminho == "/api/select-folder":
@@ -274,8 +331,13 @@ class InterfaceWeb:
         with self._lock:
             if self._estado["status"] != "configuracao":
                 raise ValueError("A pasta não pode ser alterada após o início.")
+            pasta = Path(pasta).expanduser().resolve()
+            livre = verificar_destino(pasta)
             self._pasta_selecionada = pasta
+            self.pasta_inicial = pasta
             self._estado["pasta_base"] = str(pasta)
+            self._estado["espaco_disponivel"] = formatar_tamanho(livre)
+            self._estado["erro"] = ""
 
     def _validar_configuracao(self, dados):
         with self._lock:
@@ -285,6 +347,9 @@ class InterfaceWeb:
         email = str(dados.get("email") or self.email_inicial).strip()
         senha = str(dados.get("senha") or self._senha_inicial)
         curso_id = extrair_id_interface(str(dados.get("curso") or ""))
+        modo = str(
+            dados.get("modo") or ("reduzido" if self.modo_reduzido else "completo")
+        )
         if not email:
             raise ValueError("Informe o e-mail da conta.")
         if not senha:
@@ -293,11 +358,14 @@ class InterfaceWeb:
             raise ValueError("Informe um ID numérico ou uma URL válida do curso.")
         if pasta is None:
             raise ValueError("Escolha a pasta-base usando o botão da interface.")
+        if modo not in {"completo", "reduzido"}:
+            raise ValueError("Selecione um modo de download válido.")
         return {
             "email": email,
             "password": senha,
             "curso_id": curso_id,
             "pasta_base": pasta,
+            "modo_reduzido": modo == "reduzido",
         }
 
     def _iniciar_download(self, configuracao):
@@ -307,6 +375,13 @@ class InterfaceWeb:
             self._estado["status"] = "preparando"
             self._estado["fase"] = "Preparando o Microsoft Edge"
             self._estado["email_inicial"] = ""
+            self.modo_reduzido = configuracao["modo_reduzido"]
+            self._estado["modo_reduzido"] = self.modo_reduzido
+            self._estado["modo"] = (
+                "PDFs, slides e mapas mentais"
+                if self.modo_reduzido
+                else "Conteúdo completo"
+            )
             self._senha_inicial = ""
         self._configuracao.put_nowait(configuracao)
 
@@ -325,7 +400,7 @@ class InterfaceWeb:
             return copy.deepcopy(self._estado)
 
     def registrar_log(self, mensagem: str):
-        mensagem = mensagem.strip()
+        mensagem = sanitizar_texto(mensagem).strip()
         if not mensagem:
             return
         with self._lock:
@@ -345,6 +420,27 @@ class InterfaceWeb:
     def finalizar(self, status: str, fase: str, erro: str = ""):
         with self._lock:
             self._estado.update(status=status, fase=fase, erro=erro)
+            if (
+                status in {"concluido", "cancelado", "erro"}
+                and not self._estado["resumo"]
+            ):
+                self._estado["resumo"] = {
+                    "encontrados": self._estado["encontrados"],
+                    "baixados": self._estado["baixados"],
+                    "existentes": self._estado["existentes"],
+                    "falhas": self._estado["falhas"],
+                    "volume": formatar_tamanho(self._estado["bytes_baixados"]),
+                    "tempo": "--:--",
+                }
+
+    def definir_resumo(self, resumo: dict):
+        with self._lock:
+            self._estado["resumo"] = copy.deepcopy(resumo)
+
+    def definir_diagnostico(self, diagnostico: str):
+        with self._lock:
+            self._diagnostico = diagnostico
+            self._estado["diagnostico_disponivel"] = bool(diagnostico)
 
     def abrir_pasta_destino(self):
         with self._lock:

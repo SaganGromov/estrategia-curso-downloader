@@ -14,12 +14,11 @@ permissions:
   contents: read
 
 jobs:
-  bootstrap-sem-python-configurado:
+  bootstrap-isolado:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
       ESTRATEGIA_APP_HOME: ${{ runner.temp }}\Estrategia Bootstrap Á (2)
-      ESTRATEGIA_BOOTSTRAP_FORCE_PRIVATE: "1"
       ESTRATEGIA_BOOTSTRAP_NO_DIALOG: "1"
     steps:
       - name: Baixar o código
@@ -38,6 +37,12 @@ jobs:
         run: |
           $python = Get-ChildItem "$env:ESTRATEGIA_APP_HOME\environment" -Filter python.exe -Recurse | Select-Object -First 1
           Rename-Item -LiteralPath $python.FullName -NewName "python.exe.broken"
+          .\bootstrap.ps1 --bootstrap-only
+
+      - name: Simular atualização de requisitos
+        shell: powershell
+        run: |
+          Add-Content -LiteralPath .\requirements.lock.txt -Value "# atualizacao simulada"
           .\bootstrap.ps1 --bootstrap-only
 
       - name: Exibir log se houver falha

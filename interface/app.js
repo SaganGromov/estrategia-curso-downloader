@@ -1,13 +1,14 @@
 const token = new URLSearchParams(window.location.search).get("token") || "";
 const api = (path, options = {}) => fetch(`${path}?token=${encodeURIComponent(token)}`, {
   cache: "no-store",
-  headers: { "Content-Type": "application/json", "X-Interface-Token": token, ...(options.headers || {}) },
+  headers: { "Content-Type": "application/json", "X-Interface-Token": token, "X-Estrategia-Request": "1", ...(options.headers || {}) },
   ...options,
 });
 
 const $ = (id) => document.getElementById(id);
 let lastLogText = "";
 let currentStatus = "configuracao";
+let setupInitialized = false;
 
 async function action(path, body = {}) {
   const response = await api(path, { method: "POST", body: JSON.stringify(body) });
@@ -32,6 +33,12 @@ function render(state) {
   if (!$('email').value) $('email').value = state.email_inicial || "";
   if (!$('course').value) $('course').value = state.curso_inicial || "";
   if (state.pasta_base) $("folderPath").textContent = state.pasta_base;
+  $("freeSpace").textContent = state.espaco_disponivel ? `Espaço disponível: ${state.espaco_disponivel}` : "";
+  if (!setupInitialized) {
+    const mode = state.modo_reduzido ? "reduzido" : "completo";
+    document.querySelector(`input[name='mode'][value='${mode}']`).checked = true;
+    setupInitialized = true;
+  }
 
   const configuring = state.status === "configuracao";
   $("setup").classList.toggle("hidden", !configuring);
@@ -39,8 +46,10 @@ function render(state) {
   if (configuring) return;
 
   $("phase").textContent = state.fase;
+  $("phaseInstruction").textContent = state.instrucao_login || "";
   $("found").textContent = state.encontrados;
   $("downloaded").textContent = state.baixados;
+  $("existing").textContent = state.existentes;
   $("failed").textContent = state.falhas;
   $("lesson").textContent = `${state.aula_atual} / ${state.total_aulas}`;
   $("destination").textContent = state.pasta_destino || "A pasta será criada após o login";
@@ -69,12 +78,32 @@ function render(state) {
     lastLogText = logText;
   }
   $("dashboardError").textContent = state.erro || "";
+  $("warning").textContent = state.aviso || "";
+  $("warning").classList.toggle("hidden", !state.aviso);
 
   const terminal = ["concluido", "erro", "cancelado"].includes(state.status);
   $("cancelButton").classList.toggle("hidden", terminal);
   $("shutdownButton").classList.toggle("hidden", !terminal);
+  $("copyDiagnostic").classList.toggle("hidden", !state.diagnostico_disponivel);
+  $("summaryCard").classList.toggle("hidden", !terminal);
+  const summary = state.resumo || {};
+  $("summaryFound").textContent = summary.encontrados ?? state.encontrados;
+  $("summaryDownloaded").textContent = summary.baixados ?? state.baixados;
+  $("summaryExisting").textContent = summary.existentes ?? state.existentes;
+  $("summaryFailed").textContent = summary.falhas ?? state.falhas;
+  $("summaryBytes").textContent = summary.volume ?? "0 B";
+  $("summaryElapsed").textContent = summary.tempo ?? "--:--";
   $("statusDot").classList.toggle("done", state.status === "concluido");
   $("statusDot").classList.toggle("error", ["erro", "cancelado"].includes(state.status));
+}
+
+function validateCourse() {
+  const value = $("course").value.trim();
+  const match = value.match(/^\d+$/) || value.match(/\/cursos\/(\d+)(?=[/?#]|$)/);
+  const id = match ? (match[1] || match[0]) : "";
+  $("courseFeedback").textContent = id ? `Curso identificado: ${id}` : (value ? "Informe um ID numérico ou uma URL válida do curso." : "");
+  $("courseFeedback").className = `field-feedback ${id ? "valid" : (value ? "invalid" : "")}`;
+  return Boolean(id);
 }
 
 async function poll() {
@@ -95,6 +124,8 @@ $("togglePassword").addEventListener("click", () => {
   input.type = input.type === "password" ? "text" : "password";
   $("togglePassword").textContent = input.type === "password" ? "Mostrar" : "Ocultar";
 });
+$("course").addEventListener("input", validateCourse);
+$("course").addEventListener("blur", validateCourse);
 
 $("selectFolder").addEventListener("click", async () => {
   $("selectFolder").disabled = true;
@@ -112,7 +143,9 @@ $("startForm").addEventListener("submit", async (event) => {
   $("startButton").disabled = true;
   $("formError").textContent = "Validando dados…";
   try {
-    await action("/api/start", { email: $("email").value, senha: $("password").value, curso: $("course").value });
+    if (!validateCourse()) throw new Error("Corrija o ID ou a URL do curso.");
+    const mode = document.querySelector("input[name='mode']:checked")?.value || "completo";
+    await action("/api/start", { email: $("email").value, senha: $("password").value, curso: $("course").value, modo: mode });
     $("password").value = "";
     await poll();
   } catch (error) {
@@ -123,9 +156,24 @@ $("startForm").addEventListener("submit", async (event) => {
 
 $("cancelButton").addEventListener("click", async () => {
   if (!confirm("Cancelar o download atual? Arquivos incompletos permanecerão com extensão .part.")) return;
-  try { await action("/api/cancel"); } catch (error) { $("dashboardError").textContent = error.message; }
+  $("cancelButton").disabled = true;
+  $("cancelButton").textContent = "Cancelando…";
+  try { await action("/api/cancel"); } catch (error) { $("dashboardError").textContent = error.message; $("cancelButton").disabled = false; }
 });
 $("openFolder").addEventListener("click", () => action("/api/open-folder").catch((error) => { $("dashboardError").textContent = error.message; }));
+$("toggleDetails").addEventListener("click", () => {
+  $("logs").classList.toggle("hidden");
+  $("toggleDetails").textContent = $("logs").classList.contains("hidden") ? "Ver detalhes" : "Ocultar detalhes";
+});
+$("copyDiagnostic").addEventListener("click", async () => {
+  try {
+    const response = await api("/api/diagnostic");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.erro);
+    await navigator.clipboard.writeText(data.diagnostico);
+    $("copyDiagnostic").textContent = "Diagnóstico copiado";
+  } catch (error) { $("dashboardError").textContent = `Não foi possível copiar: ${error.message}`; }
+});
 $("shutdownButton").addEventListener("click", async () => { await action("/api/shutdown"); window.close(); });
 $("closeSetup").addEventListener("click", async () => { await action("/api/shutdown"); window.close(); });
 

@@ -241,7 +241,10 @@ class HelpersTest(unittest.TestCase):
 
                 resposta = requests.post(
                     f"{url.split('/?', 1)[0]}/api/start?token={painel.token}",
-                    headers={"X-Interface-Token": painel.token},
+                    headers={
+                        "X-Interface-Token": painel.token,
+                        "X-Estrategia-Request": "1",
+                    },
                     json={
                         "email": "teste@example.test",
                         "senha": "segredo",
