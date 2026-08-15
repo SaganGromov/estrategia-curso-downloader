@@ -17,6 +17,8 @@ from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from interface_web import DownloadCancelado, InterfaceWeb, SaidaPainel
+
 
 def configurar_saida_terminal():
     """Evita falhas quando um console antigo não suporta algum símbolo Unicode."""
@@ -57,7 +59,7 @@ def ler_argumentos():
         "--pdfs-e-slides",
         dest="pdfs_e_slides",
         action="store_true",
-        help="baixa todos os PDFs e slides, sem vídeos ou mapas mentais",
+        help="baixa PDFs, slides e mapas mentais, sem vídeos",
     )
     parser.add_argument(
         "--somente-pdfs",
@@ -68,98 +70,9 @@ def ler_argumentos():
     return parser.parse_args()
 
 
-def escolher_download_dir() -> Path:
-    """Abre o seletor nativo para o usuário escolher a pasta desta execução."""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        raiz = tk.Tk()
-        raiz.withdraw()
-        raiz.attributes("-topmost", True)
-        raiz.update()
-        try:
-            escolhido = filedialog.askdirectory(
-                parent=raiz,
-                title="Escolha onde salvar os vídeos e PDFs",
-                initialdir=str(DEFAULT_DOWNLOAD_DIR),
-                mustexist=False,
-            )
-        finally:
-            raiz.destroy()
-    except Exception as e:
-        raise RuntimeError(
-            f"Não foi possível abrir o seletor de pastas do Windows: {e}"
-        ) from e
-
-    if not escolhido:
-        raise SystemExit("Seleção de pasta cancelada. Nenhum download foi iniciado.")
-
-    download_dir = Path(escolhido).resolve()
-    download_dir.mkdir(parents=True, exist_ok=True)
-    print(f"📁 Pasta-base selecionada: {download_dir}")
-    return download_dir
-
-
-def pedir_credenciais():
-    """Solicita apenas as credenciais que não vieram do ambiente."""
-    email = (os.getenv("ESTRATEGIA_EMAIL") or "").strip()
-    password = os.getenv("ESTRATEGIA_PASSWORD") or ""
-
-    if email and password:
-        print("🔐 Credenciais recebidas pelas variáveis de ambiente.")
-        return email, password
-
-    try:
-        import tkinter as tk
-        from tkinter import messagebox, simpledialog
-
-        raiz = tk.Tk()
-        raiz.withdraw()
-        raiz.attributes("-topmost", True)
-        raiz.update()
-        try:
-            while not email:
-                resposta = simpledialog.askstring(
-                    "Login do Estratégia",
-                    "Informe o e-mail da sua conta:",
-                    parent=raiz,
-                )
-                if resposta is None:
-                    raise SystemExit(
-                        "Login cancelado. Nenhuma credencial foi armazenada."
-                    )
-                email = resposta.strip()
-                if not email:
-                    messagebox.showerror(
-                        "E-mail obrigatório", "Informe o e-mail da conta.", parent=raiz
-                    )
-
-            while not password:
-                resposta = simpledialog.askstring(
-                    "Login do Estratégia",
-                    "Informe a senha (ela não será salva):",
-                    show="*",
-                    parent=raiz,
-                )
-                if resposta is None:
-                    raise SystemExit(
-                        "Login cancelado. Nenhuma credencial foi armazenada."
-                    )
-                password = resposta
-                if not password:
-                    messagebox.showerror(
-                        "Senha obrigatória", "Informe a senha da conta.", parent=raiz
-                    )
-        finally:
-            raiz.destroy()
-    except SystemExit:
-        raise
-    except Exception as e:
-        raise RuntimeError(f"Não foi possível solicitar as credenciais: {e}") from e
-
-    print("🔐 Credenciais recebidas; a senha ficará somente na memória desta execução.")
-    return email, password
+def tipos_permitidos_modo_reduzido():
+    """Mapas mentais são materiais PDF e fazem parte do modo reduzido."""
+    return {"pdf", "slides", "mapa_mental"}
 
 
 def extrair_curso_id(valor: str):
@@ -168,51 +81,6 @@ def extrair_curso_id(valor: str):
         return valor
     encontrado = re.search(r"/cursos/(\d+)(?=[/?#]|$)", valor)
     return encontrado.group(1) if encontrado else None
-
-
-def pedir_curso_id() -> str:
-    """Solicita o ID do curso em uma janela e valida a resposta."""
-    try:
-        import tkinter as tk
-        from tkinter import messagebox, simpledialog
-
-        raiz = tk.Tk()
-        raiz.withdraw()
-        raiz.attributes("-topmost", True)
-        raiz.update()
-        valor_inicial = os.getenv("ESTRATEGIA_CURSO_ID", "")
-        try:
-            while True:
-                resposta = simpledialog.askstring(
-                    "Curso do Estratégia",
-                    "Informe o ID numérico do curso\n"
-                    "(você também pode colar a URL completa):",
-                    initialvalue=valor_inicial,
-                    parent=raiz,
-                )
-                if resposta is None:
-                    raise SystemExit(
-                        "Seleção de curso cancelada. Nenhum download foi iniciado."
-                    )
-
-                curso_id = extrair_curso_id(resposta)
-                if curso_id:
-                    print(f"🎯 ID do curso selecionado: {curso_id}")
-                    return curso_id
-
-                valor_inicial = resposta
-                messagebox.showerror(
-                    "ID inválido",
-                    "Digite somente o ID numérico ou cole uma URL que "
-                    "contenha /cursos/ID/.",
-                    parent=raiz,
-                )
-        finally:
-            raiz.destroy()
-    except SystemExit:
-        raise
-    except Exception as e:
-        raise RuntimeError(f"Não foi possível solicitar o ID do curso: {e}") from e
 
 
 def montar_curso_url(curso_id: str) -> str:
@@ -309,7 +177,7 @@ def _painel_carregado(driver) -> bool:
     )
 
 
-def do_login(driver, email: str, password: str):
+def do_login(driver, email: str, password: str, verificar_cancelamento=None):
     driver.get(LOGIN_URL)
     wait = WebDriverWait(driver, 30)
 
@@ -349,6 +217,8 @@ def do_login(driver, email: str, password: str):
     inicio = time.monotonic()
     proximo_aviso = 15
     while True:
+        if verificar_cancelamento is not None:
+            verificar_cancelamento()
         if _login_concluido(driver):
             print("✅ Login detectado; continuando automaticamente.\n", flush=True)
             return
@@ -907,7 +777,14 @@ def detectar_extensao_resposta(resposta, url: str, fallback: str) -> str:
 
 
 class GerenciadorDownloads:
-    def __init__(self, download_dir: Path, driver, curso_url: str, max_tentativas=3):
+    def __init__(
+        self,
+        download_dir: Path,
+        driver,
+        curso_url: str,
+        max_tentativas=3,
+        painel=None,
+    ):
         self.download_dir = download_dir
         self.sessao = criar_sessao_download(driver, curso_url)
         self.max_tentativas = max_tentativas
@@ -928,13 +805,37 @@ class GerenciadorDownloads:
         self._ultimo_progresso = 0.0
         self._largura_progresso = 0
         self._progresso_ativo = False
+        self._item_atual = "Aguardando o primeiro arquivo"
+        self.painel = painel
+
+    def _verificar_cancelamento(self):
+        if self.painel is not None:
+            self.painel.verificar_cancelamento()
+
+    def _sincronizar_contadores(self):
+        if self.painel is not None:
+            self.painel.atualizar(
+                encontrados=self.encontrados,
+                baixados=self.baixados,
+                existentes=self.existentes,
+                falhas=self.falhas,
+                bytes_baixados=self.bytes_baixados,
+            )
 
     def configurar_total_aulas(self, total_aulas: int):
         self.total_aulas = total_aulas
+        if self.painel is not None:
+            self.painel.atualizar(total_aulas=total_aulas)
 
     def iniciar_aula(self, posicao: int):
+        self._verificar_cancelamento()
         self.aula_atual = posicao
         self.bytes_inicio_aula = self._bytes_logicos_conhecidos()
+        if self.painel is not None:
+            self.painel.atualizar(
+                aula_atual=posicao,
+                fase=f"Procurando e baixando o conteúdo da aula {posicao}",
+            )
 
     def concluir_aula(self):
         tamanho = self._bytes_logicos_conhecidos() - self.bytes_inicio_aula
@@ -1008,6 +909,7 @@ class GerenciadorDownloads:
                 f"{formatar_tamanho(recebido)}/{formatar_tamanho(total_item)}"
             )
         else:
+            percentual_item = 0
             item_texto = f"Item #{self.encontrados} {formatar_tamanho(recebido)}/?"
 
         item_texto += (
@@ -1031,6 +933,8 @@ class GerenciadorDownloads:
                 f"ETA {formatar_duracao(eta_conhecido)}"
             )
         else:
+            percentual_total = 0
+            eta_conhecido = None
             total_texto = (
                 f"Conhecido {arquivos_prontos}/{self.encontrados} "
                 f"{formatar_tamanho(pronto)} baixados; tamanho em descoberta "
@@ -1050,7 +954,31 @@ class GerenciadorDownloads:
                 f"ETA~ {eta_curso_texto}"
             )
         else:
+            eta_curso_texto = "calculando"
             curso_texto = "Curso ETA~ calculando"
+
+        if self.painel is not None:
+            self.painel.atualizar(
+                item={
+                    "nome": self._item_atual,
+                    "status": "baixando",
+                    "percentual": percentual_item,
+                    "recebido": formatar_tamanho(recebido),
+                    "total": formatar_tamanho(total_item) if total_item else "?",
+                    "velocidade": f"{formatar_tamanho(int(velocidade_item))}/s",
+                    "eta": formatar_duracao(eta_item),
+                },
+                total={
+                    "percentual": percentual_total,
+                    "pronto": formatar_tamanho(pronto),
+                    "conhecido": (
+                        formatar_tamanho(total_conhecido) if total_conhecido else "?"
+                    ),
+                    "velocidade": f"{formatar_tamanho(int(velocidade_media))}/s",
+                    "eta": formatar_duracao(eta_conhecido),
+                    "curso_eta": eta_curso_texto,
+                },
+            )
 
         linha = f"         {item_texto} | {total_texto} | {curso_texto}"
         self._largura_progresso = max(self._largura_progresso, len(linha))
@@ -1084,6 +1012,7 @@ class GerenciadorDownloads:
         return f"{base_name}{extensao}"
 
     def baixar(self, item) -> bool:
+        self._verificar_cancelamento()
         url = item["url"]
         if url in self.urls_processadas:
             print("      ⏭️ Link repetido, ignorando.")
@@ -1092,17 +1021,33 @@ class GerenciadorDownloads:
         self.encontrados += 1
 
         final_name = self._nome_destino(item)
+        self._item_atual = final_name
+        self._sincronizar_contadores()
+        if self.painel is not None:
+            self.painel.atualizar(
+                item={
+                    "nome": final_name,
+                    "status": "preparando",
+                    "percentual": 0,
+                    "recebido": "0 B",
+                    "total": "?",
+                    "velocidade": "0 B/s",
+                    "eta": "--:--",
+                }
+            )
         destino = self.download_dir / final_name
         temporario = destino.with_suffix(destino.suffix + ".part")
 
         if destino.exists() and destino.stat().st_size > 0:
             self.existentes += 1
             self.bytes_existentes += destino.stat().st_size
+            self._sincronizar_contadores()
             print(f"      ⏭️ Já existe: {final_name}")
             return True
 
         ultimo_total = 0
         for tentativa in range(1, self.max_tentativas + 1):
+            self._verificar_cancelamento()
             print(
                 f"      ⬇️ Arquivo encontrado #{self.encontrados}: {final_name} "
                 f"(tentativa {tentativa}/{self.max_tentativas})",
@@ -1143,6 +1088,7 @@ class GerenciadorDownloads:
                     recebido = 0
                     with open(temporario, "wb") as arquivo:
                         for chunk in resposta.iter_content(chunk_size=1024 * 512):
+                            self._verificar_cancelamento()
                             if not chunk:
                                 continue
                             arquivo.write(chunk)
@@ -1154,11 +1100,15 @@ class GerenciadorDownloads:
                 temporario.replace(destino)
                 self.baixados += 1
                 self.bytes_baixados += destino.stat().st_size
+                self._sincronizar_contadores()
                 print(
                     f"      ✅ Salvo ({formatar_tamanho(destino.stat().st_size)}): "
                     f"{destino}"
                 )
                 return True
+            except DownloadCancelado:
+                self._encerrar_linha_progresso()
+                raise
             except Exception as e:
                 self._encerrar_linha_progresso()
                 print(f"      ❌ Erro ao baixar: {e}")
@@ -1167,6 +1117,7 @@ class GerenciadorDownloads:
 
         self.falhas += 1
         self.bytes_falhos_conhecidos += ultimo_total
+        self._sincronizar_contadores()
         print(f"      🚩 Falha definitiva depois de {self.max_tentativas} tentativas.")
         return False
 
@@ -1201,27 +1152,38 @@ def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
     gerenciador.baixar(item)
 
 
-def main():
-    args = ler_argumentos()
-    email, password = pedir_credenciais()
-    curso_id = pedir_curso_id()
+def executar_download(args, configuracao, painel: InterfaceWeb):
+    email = configuracao["email"]
+    password = configuracao["password"]
+    curso_id = configuracao["curso_id"]
+    pasta_base = configuracao["pasta_base"]
     curso_url = montar_curso_url(curso_id)
-    pasta_base = escolher_download_dir()
-    driver = create_edge_driver(pasta_base)
+    painel.atualizar(status="login", fase="Abrindo o Edge para autenticação")
+    driver = None
     try:
-        do_login(driver, email, password)
+        driver = create_edge_driver(pasta_base)
+        do_login(driver, email, password, painel.verificar_cancelamento)
+        password = None
+        configuracao["password"] = ""
 
+        painel.atualizar(status="baixando", fase="Localizando as aulas do curso")
+        painel.verificar_cancelamento()
         aulas = listar_aulas(driver, curso_url)
         download_dir = criar_pasta_do_curso(pasta_base, driver, curso_id)
-        gerenciador = GerenciadorDownloads(download_dir, driver, curso_url)
+        painel.atualizar(pasta_destino=str(download_dir))
+        gerenciador = GerenciadorDownloads(
+            download_dir, driver, curso_url, painel=painel
+        )
         gerenciador.configurar_total_aulas(len(aulas))
         out_txt = download_dir / "links_estrategia_conteudo.txt"
 
-        tipos_permitidos = {"pdf", "slides"} if args.pdfs_e_slides else None
+        tipos_permitidos = (
+            tipos_permitidos_modo_reduzido() if args.pdfs_e_slides else None
+        )
         if args.pdfs_e_slides:
             print(
-                "\n📄 Modo PDFs + slides ativado; vídeos, mapas mentais e "
-                "outros materiais não serão baixados."
+                "\n📄 Modo PDFs + slides ativado: PDFs, slides e mapas mentais "
+                "serão baixados; vídeos e outros materiais serão ignorados."
             )
         else:
             print(
@@ -1235,6 +1197,7 @@ def main():
 
             # A página geral do curso às vezes contém apostilas ou materiais
             # que não reaparecem dentro de nenhuma aula.
+            painel.verificar_cancelamento()
             print("\n➡️ Procurando materiais gerais na página do curso...")
             for item in iterar_materiais_da_aula_atual(
                 driver,
@@ -1245,6 +1208,7 @@ def main():
                 registrar_e_baixar(item, arquivo_links, gerenciador)
 
             for posicao, aula in enumerate(aulas, start=1):
+                painel.verificar_cancelamento()
                 gerenciador.iniciar_aula(posicao)
                 num = aula["num"]
                 nome = aula["nome"]
@@ -1273,6 +1237,7 @@ def main():
                     fontes.append(iterar_videos_da_aula_atual(driver, num, nome))
                 for fonte in fontes:
                     for item in fonte:
+                        painel.verificar_cancelamento()
                         registrar_e_baixar(item, arquivo_links, gerenciador)
                 gerenciador.concluir_aula()
 
@@ -1281,18 +1246,68 @@ def main():
 
         print("\n✅ Processo completo.")
     finally:
-        # se quiser fechar o navegador no final:
-        # driver.quit()
-        pass
+        password = None
+        configuracao["password"] = ""
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+
+def main():
+    args = ler_argumentos()
+    painel = InterfaceWeb(
+        modo_reduzido=args.pdfs_e_slides,
+        pasta_inicial=DEFAULT_DOWNLOAD_DIR,
+        email_inicial=(os.getenv("ESTRATEGIA_EMAIL") or "").strip(),
+        senha_inicial=os.getenv("ESTRATEGIA_PASSWORD") or "",
+        curso_inicial=os.getenv("ESTRATEGIA_CURSO_ID") or "",
+    )
+    url = painel.iniciar()
+    print(f"🌐 Interface aberta no Edge: {url}")
+    try:
+        configuracao = painel.aguardar_configuracao()
+    except BaseException:
+        painel.parar()
+        raise
+
+    stdout_original = sys.stdout
+    stderr_original = sys.stderr
+    sys.stdout = SaidaPainel(stdout_original, painel)
+    sys.stderr = SaidaPainel(stderr_original, painel)
+    codigo_saida = 0
+    try:
+        executar_download(args, configuracao, painel)
+        painel.finalizar("concluido", "Downloads e varredura concluídos")
+    except DownloadCancelado as e:
+        print(f"\nℹ️ {e}")
+        painel.finalizar("cancelado", "Download cancelado", str(e))
+    except Exception as e:
+        codigo_saida = 1
+        mensagem = str(e) or e.__class__.__name__
+        print(f"\n❌ Não foi possível concluir: {mensagem}")
+        if os.getenv("ESTRATEGIA_DEBUG") == "1":
+            traceback.print_exc()
+        painel.finalizar("erro", "Não foi possível concluir", mensagem)
+    finally:
+        sys.stdout = stdout_original
+        sys.stderr = stderr_original
+
+    print("ℹ️ O resultado permanece aberto no Edge. Use 'Encerrar interface' ao sair.")
+    try:
+        painel.aguardar_encerramento()
+    finally:
+        painel.parar()
+    return codigo_saida
 
 
 def executar_com_tratamento_de_erros() -> int:
     try:
-        main()
-        return 0
+        return int(main() or 0)
     except SystemExit as e:
-        # argparse usa SystemExit(0) para --help; cancelamentos das janelas usam
-        # uma mensagem e também são encerramentos normais.
+        # argparse usa SystemExit(0) para --help; fechar o painel antes de iniciar
+        # também é um encerramento normal.
         if isinstance(e.code, str):
             print(f"\nℹ️ {e.code}")
             return 0

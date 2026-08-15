@@ -6,7 +6,9 @@ Baixa vídeos, PDFs, slides, mapas mentais e outros materiais dos cursos aos qua
 
 ## O que esta versão faz
 
-- abre janelas para solicitar login, ID/URL do curso e pasta de destino;
+- abre um painel local no Edge para solicitar login, ID/URL e acompanhar tudo;
+- mantém na mesma interface o arquivo atual, percentuais, velocidade, ETAs,
+  totais, aulas, logs, cancelamento e acesso à pasta final;
 - não salva sua senha em arquivo — ela permanece somente na memória enquanto o programa roda;
 - abre o Microsoft Edge para login, captcha ou autenticação em duas etapas;
 - procura livros eletrônicos originais, simplificados e com marcações, PDFs, slides, mapas mentais e outros materiais na página geral e nas aulas;
@@ -23,7 +25,8 @@ Baixa vídeos, PDFs, slides, mapas mentais e outros materiais dos cursos aos qua
 Você precisa apenas de:
 
 - Windows 10 ou 11;
-- [Python 3](https://www.python.org/downloads/windows/) instalado com a opção **Add Python to PATH** marcada;
+- [Python 3.10 ou mais recente](https://www.python.org/downloads/windows/)
+  instalado com a opção **Add Python to PATH** marcada;
 - Microsoft Edge instalado;
 - uma conta do Estratégia com acesso legítimo ao curso;
 - conexão com a internet.
@@ -42,7 +45,7 @@ Para baixar absolutamente todo o conteúdo encontrado, dê duplo clique em:
 iniciar.bat
 ```
 
-Para baixar somente todos os PDFs e slides, use:
+Para baixar todos os PDFs, slides **e mapas mentais**, sem vídeos, use:
 
 ```text
 iniciar_pdfs_e_slides.bat
@@ -50,15 +53,24 @@ iniciar_pdfs_e_slides.bat
 
 Na primeira execução, o iniciador instala automaticamente as duas dependências Python necessárias.
 
-### 3. Responda às janelas
+### 3. Use o painel aberto no Edge
 
-O programa solicitará, nesta ordem:
+O iniciador abre uma nova janela do Microsoft Edge com o painel do downloader.
+Nele, informe:
 
 1. e-mail e senha da conta;
 2. ID do curso ou URL completa do curso;
-3. pasta-base onde o conteúdo será salvo.
+3. pasta-base onde o conteúdo será salvo — use **Escolher pasta…** para abrir o
+   seletor nativo do Windows.
 
-Quando o Edge abrir, clique em **Entrar** e conclua captcha ou autenticação em duas etapas, se aparecer. O programa detecta o painel automaticamente; não é preciso voltar ao terminal e apertar Enter.
+Clique em **Abrir login e iniciar**. Uma segunda janela controlada pelo programa
+será aberta para o login do Estratégia; nela, clique em **Entrar** e conclua
+captcha ou autenticação em duas etapas, se aparecer. Depois disso, acompanhe todo
+o andamento no painel original. Ao terminar, você pode abrir a pasta baixada ou
+encerrar a interface.
+
+O painel roda somente em `127.0.0.1`, isto é, no seu próprio computador. A senha
+fica na memória apenas durante a autenticação e não é gravada em arquivo.
 
 ## Como encontrar o ID do curso
 
@@ -95,17 +107,23 @@ ignorados e arquivos `.part` podem ser baixados novamente com segurança.
 
 ## Progresso, velocidade e ETA
 
-Durante cada download, uma linha é atualizada aproximadamente a cada segundo com três blocos:
+O painel no Edge é atualizado continuamente e mostra dois blocos principais:
 
 ```text
-Item #3 42.0% 420 MB/1 GB 12 MB/s ETA 00:48 |
-Conhecido 2/3 66.7% 1.2/1.8 GB média 9 MB/s ETA 01:05 |
-Curso aula 2/20 ETA~ 03:45:00
+Item atual: 42% · 420 MB / 1 GB · 12 MB/s · ETA 00:48
+Total conhecido: 66% · 1.2 / 1.8 GB · 9 MB/s · ETA 01:05
+Curso: aula 2 / 20 · ETA aproximado 03:45:00
 ```
 
-- **Item** é o arquivo atual: porcentagem, bytes, velocidade e ETA individual.
-- **Conhecido** é o acumulado de tudo que já foi localizado: arquivos concluídos, bytes, velocidade média efetiva e ETA desse conjunto.
-- **Curso ETA~** é uma aproximação baseada no tamanho médio das aulas já concluídas e na velocidade observada.
+- **Item atual** mostra porcentagem, bytes, velocidade e ETA individual.
+- **Total conhecido** acumula tudo que já foi localizado: arquivos concluídos,
+  bytes, velocidade média e ETA desse conjunto.
+- **Curso** mostra a aula atual e uma aproximação baseada nas aulas concluídas.
+- **Atividade** reúne os detalhes que antes apareciam apenas no PowerShell.
+
+O botão **Cancelar download** interrompe o processo com segurança. O arquivo em
+andamento permanece com a extensão `.part`; os arquivos completos não são
+apagados.
 
 O programa baixa cada arquivo assim que o encontra. Por isso, arquivos de aulas ainda não visitadas não entram imediatamente no total: o indicador **Conhecido** cresce durante a varredura. Isso preserva o início imediato dos downloads sem fingir que o tamanho futuro já é conhecido. O ETA do curso aparece como `calculando` no começo e pode ficar indisponível quando o servidor não informa tamanhos ou quando ocorre uma falha.
 
@@ -123,7 +141,7 @@ Baixe tudo:
 py .\estrategia_download_edge_any.py
 ```
 
-Baixe somente PDFs e slides:
+Baixe PDFs, slides e mapas mentais, sem vídeos:
 
 ```powershell
 py .\estrategia_download_edge_any.py --pdfs-e-slides
@@ -137,13 +155,13 @@ py .\estrategia_download_edge_any.py --help
 
 ## Configuração avançada
 
-As janelas são o comportamento padrão. Se desejar automatizar parte do preenchimento, estas variáveis continuam disponíveis:
+O painel web local é o comportamento padrão. Se desejar automatizar parte do preenchimento, estas variáveis continuam disponíveis:
 
 | Variável | Uso |
 |---|---|
-| `ESTRATEGIA_EMAIL` | Evita a janela de e-mail |
-| `ESTRATEGIA_PASSWORD` | Evita a janela de senha |
-| `ESTRATEGIA_CURSO_ID` | Preenche inicialmente a janela do curso |
+| `ESTRATEGIA_EMAIL` | Preenche o e-mail no painel |
+| `ESTRATEGIA_PASSWORD` | Permite deixar a senha vazia no painel; não é exibida pelo navegador |
+| `ESTRATEGIA_CURSO_ID` | Preenche inicialmente o curso no painel |
 | `DOWNLOAD_DIR` | Define a pasta inicial do seletor |
 | `ESTRATEGIA_LOGIN_TIMEOUT` | Tempo máximo de login em segundos; padrão: 600 |
 | `ESTRATEGIA_EDGE_DRIVER` | Caminho de um EdgeDriver manual, se você não quiser usar o Selenium Manager |
@@ -167,6 +185,12 @@ Atualize o Microsoft Edge e confirme que há acesso à internet. O Selenium Mana
 ### O login fica aguardando
 
 Veja se o Edge está esperando clique em **Entrar**, captcha ou autenticação em duas etapas. O limite padrão é de dez minutos.
+
+### O painel não abriu
+
+Confirme que os arquivos da pasta `interface` foram extraídos junto com o script.
+O endereço local também aparece na janela do iniciador e pode ser copiado para o
+Edge. Firewall ou antivírus não deve bloquear conexões locais em `127.0.0.1`.
 
 ### Alguma versão do livro, slide ou mapa mental não foi encontrada
 

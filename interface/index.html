@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Estratégia Curso Downloader</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="glow glow-one"></div>
+    <div class="glow glow-two"></div>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand-mark" aria-hidden="true">E<span>↓</span></div>
+        <div>
+          <p class="eyebrow">PAINEL LOCAL E SEGURO</p>
+          <h1>Estratégia Curso Downloader</h1>
+        </div>
+        <span id="connection" class="connection"><i></i> Conectado</span>
+      </header>
+
+      <section id="setup" class="card setup-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">NOVA EXECUÇÃO</p>
+            <h2>Prepare seu download</h2>
+            <p>Os dados permanecem neste computador e a senha não é salva.</p>
+          </div>
+          <span id="modeBadge" class="mode-badge">Carregando modo…</span>
+        </div>
+
+        <form id="startForm">
+          <div class="form-grid">
+            <label>
+              <span>E-mail da conta</span>
+              <input id="email" type="email" autocomplete="username" required placeholder="voce@exemplo.com">
+            </label>
+            <label>
+              <span>Senha</span>
+              <div class="password-wrap">
+                <input id="password" type="password" autocomplete="current-password" placeholder="Sua senha">
+                <button id="togglePassword" class="text-button" type="button">Mostrar</button>
+              </div>
+            </label>
+            <label class="wide">
+              <span>ID ou URL do curso</span>
+              <input id="course" type="text" required placeholder="393267 ou a URL completa do curso">
+            </label>
+            <div class="wide">
+              <span class="field-label">Pasta-base de destino</span>
+              <div class="folder-row">
+                <div id="folderPath" class="folder-path">Nenhuma pasta selecionada</div>
+                <button id="selectFolder" class="secondary-button" type="button">Escolher pasta…</button>
+              </div>
+            </div>
+          </div>
+          <p id="formError" class="form-error" role="alert"></p>
+          <div class="form-actions">
+            <button id="closeSetup" class="ghost-button" type="button">Fechar</button>
+            <button id="startButton" class="primary-button" type="submit">
+              Abrir login e iniciar
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section id="dashboard" class="dashboard hidden">
+        <div class="status-strip card">
+          <div>
+            <span id="statusDot" class="pulse"></span>
+            <div>
+              <p class="eyebrow">STATUS</p>
+              <h2 id="phase">Preparando…</h2>
+            </div>
+          </div>
+          <span id="modeDashboard" class="mode-badge"></span>
+        </div>
+
+        <div class="metrics">
+          <article class="metric card"><span>Arquivos encontrados</span><strong id="found">0</strong></article>
+          <article class="metric card"><span>Baixados</span><strong id="downloaded">0</strong></article>
+          <article class="metric card"><span>Aula</span><strong id="lesson">0 / 0</strong></article>
+          <article class="metric card"><span>Falhas</span><strong id="failed">0</strong></article>
+        </div>
+
+        <div class="progress-grid">
+          <article class="card progress-card">
+            <div class="card-title-row">
+              <div><p class="eyebrow">ITEM ATUAL</p><h3 id="itemName">Aguardando arquivo</h3></div>
+              <strong id="itemPercent">0%</strong>
+            </div>
+            <div class="progress-track"><div id="itemBar" class="progress-fill"></div></div>
+            <div class="progress-details">
+              <span id="itemSize">0 B / ?</span><span id="itemSpeed">0 B/s</span><span>ETA <b id="itemEta">--:--</b></span>
+            </div>
+          </article>
+
+          <article class="card progress-card">
+            <div class="card-title-row">
+              <div><p class="eyebrow">TOTAL CONHECIDO</p><h3 id="totalSize">0 B / ?</h3></div>
+              <strong id="totalPercent">0%</strong>
+            </div>
+            <div class="progress-track total-track"><div id="totalBar" class="progress-fill"></div></div>
+            <div class="progress-details">
+              <span id="totalSpeed">0 B/s</span><span>ETA conhecido <b id="knownEta">calculando</b></span><span>Curso <b id="courseEta">calculando</b></span>
+            </div>
+          </article>
+        </div>
+
+        <article class="card destination-card">
+          <div><p class="eyebrow">DESTINO DESTA EXECUÇÃO</p><p id="destination">A pasta será criada após o login</p></div>
+          <button id="openFolder" class="secondary-button" type="button" disabled>Abrir pasta</button>
+        </article>
+
+        <article class="card log-card">
+          <div class="card-title-row"><div><p class="eyebrow">ATIVIDADE</p><h3>Detalhes da execução</h3></div><span class="live-label">AO VIVO</span></div>
+          <pre id="logs" aria-live="polite">Aguardando o início…</pre>
+        </article>
+
+        <p id="dashboardError" class="form-error" role="alert"></p>
+        <div class="dashboard-actions">
+          <button id="cancelButton" class="danger-button" type="button">Cancelar download</button>
+          <button id="shutdownButton" class="primary-button hidden" type="button">Encerrar interface</button>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

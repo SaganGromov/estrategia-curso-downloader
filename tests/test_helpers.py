@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import estrategia_download_edge_any as app
+from interface_web import InterfaceWeb, extrair_id_interface
 
 
 class BotaoFake:
@@ -165,6 +166,12 @@ class HelpersTest(unittest.TestCase):
         with patch.object(sys, "argv", ["programa"]):
             self.assertFalse(app.ler_argumentos().pdfs_e_slides)
 
+    def test_modo_reduzido_inclui_mapas_mentais(self):
+        self.assertEqual(
+            app.tipos_permitidos_modo_reduzido(),
+            {"pdf", "slides", "mapa_mental"},
+        )
+
     def test_coleta_todas_as_variantes_mostradas_nos_cartoes(self):
         with patch("sys.stdout", new_callable=io.StringIO):
             materiais = list(
@@ -176,18 +183,79 @@ class HelpersTest(unittest.TestCase):
             ["pdf", "pdf", "pdf", "slides", "mapa_mental"],
         )
 
-    def test_modo_reduzido_coleta_pdfs_e_slides(self):
+    def test_modo_reduzido_coleta_pdfs_slides_e_mapas_mentais(self):
         with patch("sys.stdout", new_callable=io.StringIO):
             materiais = list(
                 app.iterar_materiais_da_aula_atual(
                     DriverMateriaisFake(),
                     1,
                     "Aula 1",
-                    {"pdf", "slides"},
+                    app.tipos_permitidos_modo_reduzido(),
                 )
             )
-        self.assertEqual(len(materiais), 4)
-        self.assertNotIn("mapa_mental", {item["tipo"] for item in materiais})
+        self.assertEqual(len(materiais), 5)
+        self.assertIn("mapa_mental", {item["tipo"] for item in materiais})
+
+    def test_interface_extrai_id_de_url(self):
+        self.assertEqual(
+            extrair_id_interface(
+                "https://example.test/app/dashboard/cursos/987654/aulas"
+            ),
+            "987654",
+        )
+
+    def test_interface_local_exige_token_para_estado(self):
+        with TemporaryDirectory() as diretorio:
+            painel = InterfaceWeb(
+                modo_reduzido=True,
+                pasta_inicial=Path(diretorio),
+            )
+            with patch("interface_web.abrir_interface_no_edge"):
+                url = painel.iniciar()
+            try:
+                import requests
+
+                self.assertEqual(requests.get(url, timeout=3).status_code, 200)
+                endereco = url.split("/?", 1)[0]
+                self.assertEqual(
+                    requests.get(f"{endereco}/api/state", timeout=3).status_code,
+                    403,
+                )
+                estado = requests.get(
+                    f"{endereco}/api/state?token={painel.token}", timeout=3
+                ).json()
+                self.assertEqual(estado["status"], "configuracao")
+                self.assertIn("mapas mentais", estado["modo"])
+            finally:
+                painel.parar()
+
+    def test_interface_recebe_formulario_sem_expor_senha_no_estado(self):
+        with TemporaryDirectory() as diretorio:
+            pasta = Path(diretorio)
+            painel = InterfaceWeb(modo_reduzido=False, pasta_inicial=pasta)
+            with patch("interface_web.abrir_interface_no_edge"):
+                url = painel.iniciar()
+            try:
+                painel._definir_pasta(pasta)
+                import requests
+
+                resposta = requests.post(
+                    f"{url.split('/?', 1)[0]}/api/start?token={painel.token}",
+                    headers={"X-Interface-Token": painel.token},
+                    json={
+                        "email": "teste@example.test",
+                        "senha": "segredo",
+                        "curso": "393267",
+                    },
+                    timeout=3,
+                )
+                self.assertEqual(resposta.status_code, 202)
+                configuracao = painel.aguardar_configuracao()
+                self.assertEqual(configuracao["curso_id"], "393267")
+                self.assertEqual(configuracao["pasta_base"], pasta)
+                self.assertNotIn("segredo", str(painel.estado()))
+            finally:
+                painel.parar()
 
     def test_limpa_nome_para_windows(self):
         self.assertEqual(
