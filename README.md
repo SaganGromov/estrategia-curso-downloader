@@ -1,140 +1,162 @@
-# estrategia-video-downloader
-Automação de download/salvamento de aulas com Python + Selenium (Edge)
+# Estratégia Curso Downloader
 
-### Requisitos
-• Windows
+Baixa os vídeos e PDFs dos cursos aos quais a sua conta do Estratégia Concursos tem acesso, organizando o conteúdo por curso e aula.
 
-• Microsoft Edge instalado
+> Este projeto é um **fork aprimorado** de [suygetsu-bot/estrategia-video-downloader](https://github.com/suygetsu-bot/estrategia-video-downloader). Ele preserva a ideia original e acrescenta uma experiência guiada, PDFs, escolha automática da melhor qualidade, downloads imediatos, retomada e organização automática.
 
-• Python 3 instalado e no PATH
+## O que esta versão faz
 
-• Conta do Estratégia que já acessa o curso
+- abre janelas para solicitar login, ID/URL do curso e pasta de destino;
+- não salva sua senha em arquivo — ela permanece somente na memória enquanto o programa roda;
+- abre o Microsoft Edge para login, captcha ou autenticação em duas etapas;
+- procura PDFs na página geral do curso e dentro de cada aula;
+- baixa cada vídeo na **maior resolução disponibilizada pelo site**;
+- começa a baixar assim que encontra cada arquivo, sem esperar a varredura terminar;
+- mostra progresso, tamanho, tentativas, arquivos existentes e falhas;
+- evita links duplicados e mantém downloads incompletos com a extensão `.part`;
+- cria uma subpasta com o nome do curso;
+- registra os links encontrados em `links_estrategia_conteudo.txt`;
+- usa o Selenium Manager para cuidar do EdgeDriver automaticamente.
 
-• WebDriver do Edge (msedgedriver) compatível com a versão do teu navegador
+## Uso simples no Windows
 
+Você precisa apenas de:
 
-## Passo a Passo
+- Windows 10 ou 11;
+- [Python 3](https://www.python.org/downloads/windows/) instalado com a opção **Add Python to PATH** marcada;
+- Microsoft Edge instalado;
+- uma conta do Estratégia com acesso legítimo ao curso;
+- conexão com a internet.
 
-### 1. Criar as pastas
+Não é necessário abrir o PowerShell como administrador, configurar variáveis de ambiente ou baixar o `msedgedriver.exe` manualmente.
 
-Execute o **PowerShell como Administrador** e cole:
+### 1. Baixe o projeto
 
-```
-mkdir C:\estrategia
-cd C:\estrategia
-mkdir downloads
-mkdir driver
-```
+Na página deste repositório, clique em **Code → Download ZIP** e extraia o ZIP para uma pasta comum, como Documentos.
 
-C:\estrategia → raiz do projeto
+### 2. Inicie com duplo clique
 
-C:\estrategia\downloads → onde os vídeos vão cair
+Para baixar vídeos e PDFs, dê duplo clique em:
 
-C:\estrategia\driver → onde vamos colocar o msedgedriver.exe
-
-
-OBS.: Você pode alterar o destino do arquivo, se assim desejar.
-
-
-### 2. Instalar as libs Python
-Ainda no PowerShell:
-
-```
-pip install selenium requests
-```
-Se der erro de permissão, tente rodar com:
-```
-py -m pip install selenium requests
+```text
+iniciar.bat
 ```
 
+Para baixar somente os PDFs, use:
 
-### 3. Baixar o msedgedriver.exe
-Abra o Edge → clique onde tem 3 pontinhos no canto superior direito → Ajuda e comentários → Sobre o Microsoft Edge → anote a versão (ex.: 141.x.x).
-
-Baixe o WebDriver da mesma versão (site da Microsoft → Edge WebDriver). → https://developer.microsoft.com/pt-br/microsoft-edge/tools/webdriver
-
-Salve o arquivo em:
-```
-C:\estrategia\driver\msedgedriver.exe
-```
-O script já está apontando pra esse caminho.
-
-
-### 4. Criar o script
-Crie um arquivo no Bloco de Notas chamado:
-```
-C:\estrategia\estrategia_download_edge_any.py
-```
-e cole o código que está nesse link aqui 👇:
-
-https://gist.github.com/suygetsu-bot/cc3e764fadc66cbf6b127f2d37b0e9f5
-
-OBS.: Na linha de código: 
-```
-CURSO_URL = "https://www.estrategiaconcursos.com.br/app/dashboard/cursos/21XXXX/aulas"
-```
-você DEVE preencher com o link do curso desejado no espaço entre aspas (").
-
-Salve o tipo do arquivo como "Todos os arquivos", não como *.txt
-
-
-### 5. Definir as variáveis de ambiente (login + pasta + qualidade opcional)
-
-No PowerShell:
-```
-cd C:\estrategia
-$env:ESTRATEGIA_EMAIL = "seu-email-aqui"
-$env:ESTRATEGIA_PASSWORD = "sua-senha-aqui"
-$env:DOWNLOAD_DIR = "C:\estrategia\downloads"
-# opcional:
-# $env:ESTRATEGIA_QUALITY = "720p"
+```text
+iniciar_somente_pdfs.bat
 ```
 
+Na primeira execução, o iniciador instala automaticamente as duas dependências Python necessárias.
 
-PREENCHA NO CÓDIGO ACIMA SUAS CREDENCIAIS (LOGIN E SENHA)!
+### 3. Responda às janelas
 
+O programa solicitará, nesta ordem:
 
-### 6. Rodar
+1. e-mail e senha da conta;
+2. ID do curso ou URL completa do curso;
+3. pasta-base onde o conteúdo será salvo.
+
+Quando o Edge abrir, clique em **Entrar** e conclua captcha ou autenticação em duas etapas, se aparecer. O programa detecta o painel automaticamente; não é preciso voltar ao terminal e apertar Enter.
+
+## Como encontrar o ID do curso
+
+Abra o curso no navegador. Em uma URL como:
+
+```text
+https://www.estrategiaconcursos.com.br/app/dashboard/cursos/393267/aulas
 ```
-cd C:\estrategia
+
+o ID é `393267`. Você pode informar apenas o número ou colar a URL inteira na janela.
+
+## Organização dos arquivos
+
+Ao escolher, por exemplo, `D:\Meus estudos`, o programa cria a pasta do curso:
+
+```text
+D:\Meus estudos\Nome do curso\
+├── Aula 01 - PDF 01 - Livro digital.pdf
+├── Aula 01 - Vídeo 01 - Apresentação.mp4
+├── Aula 01 - Vídeo 02 - Conteúdo.mp4
+├── links_estrategia_conteudo.txt
+└── algum-download-interrompido.mp4.part
+```
+
+Em uma nova execução na mesma pasta, arquivos completos já existentes são ignorados. Arquivos `.part` podem ser baixados novamente com segurança.
+
+## Uso pelo terminal (opcional)
+
+Instale as dependências:
+
+```powershell
+py -m pip install -r requirements.txt
+```
+
+Baixe tudo:
+
+```powershell
 py .\estrategia_download_edge_any.py
 ```
 
+Baixe somente PDFs:
 
-Ele vai abrir o Edge → você faz login → volta pro PowerShell → aperta ENTER → ele começa a percorrer as aulas e baixar.
-
-
-
-### 7. Como mudar de curso
-
-Quer baixar outro curso lá no Estratégia?
-
-Basta abrir o arquivo "estrategia_download_edge_any" com o bloco de notas e alterar apenas uma linha do código (onde está CURSO_URL): 
+```powershell
+py .\estrategia_download_edge_any.py --somente-pdfs
 ```
-CURSO_URL = "https://www.estrategiaconcursos.com.br/app/dashboard/cursos/XXXXXX/aulas"
+
+Consulte as opções:
+
+```powershell
+py .\estrategia_download_edge_any.py --help
 ```
-e rodar de novo.
 
+## Configuração avançada
 
-### 8. Organização dos arquivos
+As janelas são o comportamento padrão. Se desejar automatizar parte do preenchimento, estas variáveis continuam disponíveis:
 
-Por padrão ele salva num formato idêntico ao exemplo a seguir:
+| Variável | Uso |
+|---|---|
+| `ESTRATEGIA_EMAIL` | Evita a janela de e-mail |
+| `ESTRATEGIA_PASSWORD` | Evita a janela de senha |
+| `ESTRATEGIA_CURSO_ID` | Preenche inicialmente a janela do curso |
+| `DOWNLOAD_DIR` | Define a pasta inicial do seletor |
+| `ESTRATEGIA_LOGIN_TIMEOUT` | Tempo máximo de login em segundos; padrão: 600 |
+| `ESTRATEGIA_EDGE_DRIVER` | Caminho de um EdgeDriver manual, se você não quiser usar o Selenium Manager |
 
-Aula 00 - Vídeo 01 - Ortografia oficial.mp4
+Exemplo temporário no PowerShell:
 
-Aula 00 - Vídeo 02 - Acentuação gráfica.mp4
+```powershell
+$env:ESTRATEGIA_EMAIL = "voce@exemplo.com"
+$env:ESTRATEGIA_PASSWORD = "sua-senha"
+py .\estrategia_download_edge_any.py
+```
 
-Aula 21 - Vídeo 03 - Parênteses.mp4
+Evite gravar sua senha em scripts, no README ou em arquivos versionados.
 
-Aula 58 - Vídeo 01 - Revisão geral.mp4
+## Solução de problemas
 
+### O Edge não abre
 
+Atualize o Microsoft Edge e confirme que há acesso à internet. O Selenium Manager precisa obter um driver compatível na primeira execução. Usuários avançados podem definir `ESTRATEGIA_EDGE_DRIVER` com um executável próprio.
 
-Ou seja: dá pra saber qual é a aula, qual vídeo é e o nome do vídeo.
+### O login fica aguardando
 
+Veja se o Edge está esperando clique em **Entrar**, captcha ou autenticação em duas etapas. O limite padrão é de dez minutos.
 
+### Nenhuma aula ou PDF foi encontrado
 
-É isso, galera. Espero que ajude s2
+Confirme o ID informado e o acesso da conta. O site pode alterar sua interface; nesse caso, abra uma issue com a mensagem exibida e, sem expor credenciais, uma descrição da tela.
 
+### Um arquivo falhou
 
-Bons estudos!!! 📚
+O programa tenta cada download três vezes e apresenta um resumo final. Execute novamente usando a mesma pasta: arquivos completos serão ignorados e os restantes serão tentados de novo.
+
+## Uso responsável
+
+Use esta ferramenta somente para conteúdos aos quais você tem acesso autorizado e respeite os termos da plataforma e os direitos autorais. Este projeto não é afiliado nem endossado pelo Estratégia Concursos.
+
+## Créditos
+
+- Projeto original: [suygetsu-bot/estrategia-video-downloader](https://github.com/suygetsu-bot/estrategia-video-downloader)
+- Este fork: melhorias de usabilidade, autenticação guiada, parametrização do curso, PDFs, melhor qualidade disponível, progresso e organização de arquivos.
