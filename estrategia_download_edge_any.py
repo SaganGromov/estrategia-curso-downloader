@@ -416,48 +416,18 @@ def listar_aulas(driver, curso_url: str):
     return aulas
 
 
-def obter_nome_curso(driver, curso_id: str) -> str:
-    """Obtém um nome seguro para a subpasta a partir da página do curso."""
-    candidatos = []
-    seletores = (
-        "[class*='CourseHeader'] h1",
-        "[class*='CourseHeader'] [class*='title']",
-        "[class*='course-header'] h1",
-        "main h1",
-        "h1",
-    )
-    for seletor in seletores:
-        for elemento in driver.find_elements(By.CSS_SELECTOR, seletor):
-            texto = (elemento.text or "").strip()
-            if texto:
-                candidatos.append(texto)
-
-    try:
-        meta_titulo = driver.find_elements(By.CSS_SELECTOR, "meta[property='og:title']")
-        if meta_titulo:
-            candidatos.append(meta_titulo[0].get_attribute("content") or "")
-    except Exception:
-        pass
-    candidatos.append(driver.title or "")
-
-    genericos = {"aulas", "meus cursos", "cursos", "dashboard", "estratégia concursos"}
-    for candidato in candidatos:
-        candidato = re.sub(
-            r"\s*[|–—-]\s*Estratégia(?: Concursos)?.*$",
-            "",
-            candidato,
-            flags=re.IGNORECASE,
-        ).strip()
-        nome = safe_filename(candidato)
-        if len(nome) >= 3 and nome.lower() not in genericos:
-            return nome[:100].rstrip(" .")
-
-    return f"Curso {curso_id}"
+def montar_nome_pasta_curso(curso_id: str, unix_timestamp=None) -> str:
+    """Monta um nome estável, rastreável e independente do HTML da página."""
+    if unix_timestamp is None:
+        unix_timestamp = int(time.time())
+    return f"CURSO_ESTRATEGIA_{curso_id}_{int(unix_timestamp)}"
 
 
-def criar_pasta_do_curso(pasta_base: Path, driver, curso_id: str) -> Path:
-    nome_curso = obter_nome_curso(driver, curso_id)
-    pasta_curso = pasta_base / nome_curso
+def criar_pasta_do_curso(
+    pasta_base: Path, driver, curso_id: str, unix_timestamp=None
+) -> Path:
+    nome_pasta = montar_nome_pasta_curso(curso_id, unix_timestamp)
+    pasta_curso = pasta_base / nome_pasta
     pasta_curso.mkdir(parents=True, exist_ok=True)
 
     # Mantém também eventuais downloads iniciados pelo próprio Edge dentro da
@@ -470,7 +440,8 @@ def criar_pasta_do_curso(pasta_base: Path, driver, curso_id: str) -> Path:
     except Exception:
         pass
 
-    print(f"📚 Curso identificado: {nome_curso}")
+    print(f"📚 ID do curso: {curso_id}")
+    print(f"🗂️ Pasta desta execução: {nome_pasta}")
     print(f"📁 Conteúdo será salvo em: {pasta_curso}")
     return pasta_curso
 

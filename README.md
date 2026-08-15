@@ -14,7 +14,7 @@ Baixa vídeos, PDFs, slides, mapas mentais e outros materiais dos cursos aos qua
 - começa a baixar assim que encontra cada arquivo, sem esperar a varredura terminar;
 - mostra progresso individual e cumulativo, velocidade e estimativas de tempo;
 - evita links duplicados e mantém downloads incompletos com a extensão `.part`;
-- cria uma subpasta com o nome do curso;
+- cria uma subpasta exclusiva com o ID do curso e o timestamp da execução;
 - registra os links encontrados em `links_estrategia_conteudo.txt`;
 - usa o Selenium Manager para cuidar do EdgeDriver automaticamente.
 
@@ -72,10 +72,11 @@ o ID é `393267`. Você pode informar apenas o número ou colar a URL inteira na
 
 ## Organização dos arquivos
 
-Ao escolher, por exemplo, `D:\Meus estudos`, o programa cria a pasta do curso:
+Ao escolher, por exemplo, `D:\Meus estudos`, o programa cria uma subpasta no
+formato `CURSO_ESTRATEGIA_<ID>_<TIMESTAMP_UNIX>`:
 
 ```text
-D:\Meus estudos\Nome do curso\
+D:\Meus estudos\CURSO_ESTRATEGIA_393267_1723680000\
 ├── Aula 01 - PDF 01 - Livro digital.pdf
 ├── Aula 01 - PDF 02 - Livro versão simplificada.pdf
 ├── Aula 01 - PDF 03 - Livro marcação dos aprovados.pdf
@@ -87,7 +88,10 @@ D:\Meus estudos\Nome do curso\
 └── algum-download-interrompido.mp4.part
 ```
 
-Em uma nova execução na mesma pasta, arquivos completos já existentes são ignorados. Arquivos `.part` podem ser baixados novamente com segurança.
+O número final é o timestamp Unix do momento em que a pasta foi criada. Assim,
+cada execução fica isolada em sua própria subpasta, mesmo quando você escolhe a
+mesma pasta-base. Durante uma execução, arquivos completos já existentes são
+ignorados e arquivos `.part` podem ser baixados novamente com segurança.
 
 ## Progresso, velocidade e ETA
 
@@ -170,7 +174,9 @@ O detector reconhece cartões por URL, extensão e textos como “Livro Eletrôn
 
 ### Um arquivo falhou
 
-O programa tenta cada download três vezes e apresenta um resumo final. Execute novamente usando a mesma pasta: arquivos completos serão ignorados e os restantes serão tentados de novo.
+O programa tenta cada download três vezes e apresenta um resumo final. Se você
+executá-lo novamente, uma nova subpasta com outro timestamp será criada para não
+misturar execuções diferentes.
 
 ### O ETA mudou durante a execução
 

@@ -18,11 +18,17 @@ class BotaoFake:
 
 
 class DriverFake:
+    def __init__(self):
+        self.comandos_cdp = []
+
     def get_cookies(self):
         return []
 
     def execute_script(self, _script):
         return "User-Agent de teste"
+
+    def execute_cdp_cmd(self, comando, parametros):
+        self.comandos_cdp.append((comando, parametros))
 
 
 class DriverMateriaisFake:
@@ -86,6 +92,33 @@ class HelpersTest(unittest.TestCase):
 
     def test_monta_url_do_curso(self):
         self.assertTrue(app.montar_curso_url("123456").endswith("/cursos/123456/aulas"))
+
+    def test_monta_nome_timestampado_da_pasta_do_curso(self):
+        with patch.object(app.time, "time", return_value=1_723_680_000.987):
+            self.assertEqual(
+                app.montar_nome_pasta_curso("393267"),
+                "CURSO_ESTRATEGIA_393267_1723680000",
+            )
+
+    def test_cria_subpasta_com_id_e_timestamp(self):
+        with TemporaryDirectory() as diretorio:
+            driver = DriverFake()
+            with patch("sys.stdout", new_callable=io.StringIO):
+                pasta = app.criar_pasta_do_curso(
+                    Path(diretorio), driver, "393267", 1_723_680_000
+                )
+
+            self.assertTrue(pasta.is_dir())
+            self.assertEqual(pasta.name, "CURSO_ESTRATEGIA_393267_1723680000")
+            self.assertEqual(
+                driver.comandos_cdp,
+                [
+                    (
+                        "Page.setDownloadBehavior",
+                        {"behavior": "allow", "downloadPath": str(pasta)},
+                    )
+                ],
+            )
 
     def test_detecta_maior_resolucao_anunciada(self):
         botao = BotaoFake("Baixar 720p ou 1080p")
