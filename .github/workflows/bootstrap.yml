@@ -24,10 +24,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Definir pasta privada de teste
-        shell: powershell
+        shell: pwsh
         run: |
-          "ESTRATEGIA_APP_HOME=$env:RUNNER_TEMP\Estrategia Bootstrap Á (2)" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ESTRATEGIA_APP_HOME=$env:RUNNER_TEMP\Estrategia Bootstrap Á (2)" >> $env:GITHUB_ENV
 
       - name: Primeira instalação privada
         shell: powershell
@@ -47,7 +46,10 @@ jobs:
       - name: Simular atualização de requisitos
         shell: powershell
         run: |
-          Add-Content -LiteralPath .\requirements.lock.txt -Value "# atualizacao simulada"
+          [IO.File]::AppendAllText(
+            (Resolve-Path .\requirements.lock.txt),
+            [Environment]::NewLine + "# atualizacao simulada"
+          )
           .\bootstrap.ps1 --bootstrap-only
 
       - name: Exibir log se houver falha

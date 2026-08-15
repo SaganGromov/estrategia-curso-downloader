@@ -397,12 +397,22 @@ function Ensure-Dependencies {
 
     Write-Host "      Instalando componentes testados (Selenium e Requests)..."
     Write-TechnicalLog ("Instalando requirements SHA-256=$RequirementsHash")
-    & $EnvironmentPython -m pip install `
-        --disable-pip-version-check `
-        --no-input `
-        --upgrade `
-        -r $RequirementsPath 1>> $SessionLog 2>&1
-    if ($LASTEXITCODE -ne 0 -or -not (Test-ApplicationEnvironment $EnvironmentPython)) {
+    $PreviousErrorPreference = $ErrorActionPreference
+    try {
+        # pip pode escrever avisos em stderr mesmo quando funciona. Captura-los
+        # no log nao deve transformar um aviso em excecao do PowerShell.
+        $ErrorActionPreference = "Continue"
+        & $EnvironmentPython -m pip install `
+            --disable-pip-version-check `
+            --no-input `
+            --upgrade `
+            -r $RequirementsPath 1>> $SessionLog 2>&1
+        $PipExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $PreviousErrorPreference
+    }
+    if ($PipExitCode -ne 0 -or -not (Test-ApplicationEnvironment $EnvironmentPython)) {
+        Write-TechnicalLog ("pip terminou com codigo $PipExitCode")
         Stop-Friendly `
             "Nao foi possivel instalar os componentes do aplicativo." `
             "Verifique a conexao com a internet e tente novamente." `
