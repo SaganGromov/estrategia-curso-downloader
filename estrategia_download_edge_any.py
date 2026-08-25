@@ -45,7 +45,65 @@ def ler_argumentos():
         action="store_true",
         help="baixa todos os PDFs encontrados, sem procurar ou baixar vídeos",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--somente-videos",
+        action="store_true",
+        help="procura e baixa somente vídeos, sem procurar PDFs",
+    )
+    parser.add_argument(
+        "--curso-id",
+        help="ID numérico do curso; evita a janela de seleção do curso",
+    )
+    parser.add_argument(
+        "--pasta-curso",
+        type=Path,
+        help="pasta exata de um curso já baixado; evita o seletor e nova subpasta",
+    )
+    parser.add_argument(
+        "--aula",
+        type=int,
+        action="append",
+        dest="aulas",
+        help="processa somente esta aula; pode ser usado mais de uma vez",
+    )
+    parser.add_argument(
+        "--videos",
+        help="números dos vídeos a processar, separados por vírgula (ex.: 16,17,18)",
+    )
+    parser.add_argument(
+        "--tentativas-links",
+        type=int,
+        default=3,
+        help="tentativas para fazer o link de cada vídeo aparecer (padrão: 3)",
+    )
+    parser.add_argument(
+        "--organizar-por-aula",
+        action="store_true",
+        help="salva no layout aula_NN\\videos usado por versões empacotadas",
+    )
+    args = parser.parse_args()
+
+    if args.somente_pdfs and args.somente_videos:
+        parser.error("--somente-pdfs e --somente-videos não podem ser combinados")
+    if args.curso_id and not extrair_curso_id(args.curso_id):
+        parser.error("--curso-id deve conter um ID numérico válido")
+    if args.tentativas_links < 1:
+        parser.error("--tentativas-links deve ser maior que zero")
+
+    args.videos_selecionados = None
+    if args.videos:
+        try:
+            args.videos_selecionados = {
+                int(valor.strip()) for valor in args.videos.split(",") if valor.strip()
+            }
+        except ValueError:
+            parser.error("--videos deve conter somente números separados por vírgula")
+        if not args.videos_selecionados or min(args.videos_selecionados) < 1:
+            parser.error("--videos deve conter números maiores que zero")
+        if not args.somente_videos:
+            parser.error("--videos exige também --somente-videos")
+
+    return args
 
 
 def escolher_download_dir() -> Path:
@@ -506,7 +564,13 @@ def _resolucao_do_botao(botao):
     return max(resolucoes) if resolucoes else None
 
 
-def iterar_videos_da_aula_atual(driver, aula_num: int, aula_nome: str):
+def iterar_videos_da_aula_atual(
+    driver,
+    aula_num: int,
+    aula_nome: str,
+    videos_selecionados=None,
+    tentativas_links: int = 3,
+):
     """Encontra e entrega cada vídeo assim que o respectivo link aparece."""
     wait = WebDriverWait(driver, 15)
 
@@ -529,83 +593,108 @@ def iterar_videos_da_aula_atual(driver, aula_num: int, aula_nome: str):
     nomes_usados_nesta_aula = {}
 
     for idx in range(total):
+        numero_video = idx + 1
+        if videos_selecionados is not None and numero_video not in videos_selecionados:
+            continue
+
         try:
-            videos = driver.find_elements(By.CSS_SELECTOR, "span.VideoItem-info-title")
-            if idx >= len(videos):
-                break
+            titulo_video = f"video_{numero_video}"
+            botao_escolhido = None
+            resolucao_escolhida = None
 
-            vid_el = videos[idx]
-            titulo_video = (vid_el.text or f"video_{idx + 1}").strip()
+            for tentativa in range(1, tentativas_links + 1):
+                videos = driver.find_elements(
+                    By.CSS_SELECTOR, "span.VideoItem-info-title"
+                )
+                if idx >= len(videos):
+                    break
 
-            driver.execute_script(
-                "arguments[0].scrollIntoView({block:'center'});", vid_el
-            )
-            time.sleep(0.15)
+                vid_el = videos[idx]
+                titulo_video = (vid_el.text or titulo_video).strip()
 
-            try:
-                clickable = vid_el.find_element(By.XPATH, "ancestor::a[1]")
-            except Exception:
+                driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center'});", vid_el
+                )
+                time.sleep(0.15)
+
                 try:
-                    clickable = vid_el.find_element(By.XPATH, "ancestor::button[1]")
+                    clickable = vid_el.find_element(By.XPATH, "ancestor::a[1]")
                 except Exception:
-                    clickable = vid_el
+                    try:
+                        clickable = vid_el.find_element(By.XPATH, "ancestor::button[1]")
+                    except Exception:
+                        clickable = vid_el
 
-            try:
-                clickable.click()
-            except Exception:
-                driver.execute_script("arguments[0].click();", clickable)
+                try:
+                    clickable.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", clickable)
 
-            time.sleep(0.9)
+                time.sleep(0.9)
+                ok = expandir_opcoes_download(driver)
+                if ok:
+                    candidatos = []
+                    links_sem_resolucao = []
+                    for botao in driver.find_elements(By.CSS_SELECTOR, "a[href]"):
+                        if not botao.is_displayed():
+                            continue
+                        href_botao = botao.get_attribute("href") or ""
+                        resolucao = _resolucao_do_botao(botao)
+                        if resolucao:
+                            candidatos.append((resolucao, botao))
+                            continue
 
-            ok = expandir_opcoes_download(driver)
-            if not ok:
+                        descricao = " ".join(
+                            filter(
+                                None,
+                                [botao.text, botao.get_attribute("aria-label")],
+                            )
+                        ).lower()
+                        if re.search(
+                            r"\.mp4(?:$|[?#])", href_botao, re.IGNORECASE
+                        ) or (
+                            "vídeo" in descricao
+                            and ("baixar" in descricao or "download" in descricao)
+                        ):
+                            links_sem_resolucao.append(botao)
+
+                    if candidatos:
+                        resolucao_escolhida, botao_escolhido = max(
+                            candidatos, key=lambda item: item[0]
+                        )
+                    elif links_sem_resolucao:
+                        botao_escolhido = links_sem_resolucao[0]
+
+                if botao_escolhido is not None:
+                    break
+                if tentativa < tentativas_links:
+                    print(
+                        f"      ↪️ Vídeo {numero_video:02d}: o link ainda não "
+                        f"apareceu; nova tentativa ({tentativa + 1}/{tentativas_links})."
+                    )
+                    time.sleep(2)
+
+            if botao_escolhido is None:
                 print(
-                    f"      ⚠️ Vídeo {idx + 1:02d}: não consegui abrir "
-                    "'Opções de download'"
+                    f"      ⚠️ Vídeo {numero_video:02d}: nenhum link de download "
+                    f"apareceu após {tentativas_links} tentativas."
                 )
                 continue
 
-            candidatos = []
-            links_sem_resolucao = []
-            for botao in driver.find_elements(By.CSS_SELECTOR, "a[href]"):
-                if not botao.is_displayed():
-                    continue
-                href_botao = botao.get_attribute("href") or ""
-                resolucao = _resolucao_do_botao(botao)
-                if resolucao:
-                    candidatos.append((resolucao, botao))
-                    continue
-
-                descricao = " ".join(
-                    filter(None, [botao.text, botao.get_attribute("aria-label")])
-                ).lower()
-                if re.search(r"\.mp4(?:$|[?#])", href_botao, re.IGNORECASE) or (
-                    "vídeo" in descricao
-                    and ("baixar" in descricao or "download" in descricao)
-                ):
-                    links_sem_resolucao.append(botao)
-
-            if candidatos:
-                resolucao_escolhida, botao_escolhido = max(
-                    candidatos, key=lambda item: item[0]
-                )
+            if resolucao_escolhida:
                 print(
-                    f"      🎞️ Vídeo {idx + 1:02d}: melhor qualidade disponível: "
-                    f"{resolucao_escolhida}p."
-                )
-            elif links_sem_resolucao:
-                botao_escolhido = links_sem_resolucao[0]
-                print(
-                    f"      ℹ️ Vídeo {idx + 1:02d}: usando o link disponível; "
-                    "a resolução não foi informada."
+                    f"      🎞️ Vídeo {numero_video:02d}: melhor qualidade "
+                    f"disponível: {resolucao_escolhida}p."
                 )
             else:
-                print(f"      ⚠️ Vídeo {idx + 1:02d}: nenhum link de download apareceu")
-                continue
+                print(
+                    f"      ℹ️ Vídeo {numero_video:02d}: usando o link disponível; "
+                    "a resolução não foi informada."
+                )
 
             href = botao_escolhido.get_attribute("href")
             if not href:
-                print(f"      ⚠️ Vídeo {idx + 1:02d}: botão de download sem href")
+                print(f"      ⚠️ Vídeo {numero_video:02d}: botão de download sem href")
                 continue
 
             base_title = safe_filename(titulo_video)
@@ -616,19 +705,19 @@ def iterar_videos_da_aula_atual(driver, aula_num: int, aula_nome: str):
             else:
                 nomes_usados_nesta_aula[base_title] = 1
 
-            print(f"      ✅ Vídeo {idx + 1:02d}: {base_title} -> {href}")
+            print(f"      ✅ Vídeo {numero_video:02d}: {base_title} -> {href}")
 
             yield {
                 "tipo": "video",
                 "aula_num": aula_num,
                 "aula_nome": safe_filename(aula_nome),
-                "item_num": idx + 1,
+                "item_num": numero_video,
                 "titulo": base_title,
                 "extensao": ".mp4",
                 "url": href,
             }
         except Exception as e:
-            print(f"      ❌ Erro no vídeo {idx + 1:02d}: {e}")
+            print(f"      ❌ Erro no vídeo {numero_video:02d}: {e}")
 
 
 def _texto_link(elemento) -> str:
@@ -756,10 +845,18 @@ def formatar_tamanho(total_bytes: int) -> str:
 
 
 class GerenciadorDownloads:
-    def __init__(self, download_dir: Path, driver, curso_url: str, max_tentativas=3):
+    def __init__(
+        self,
+        download_dir: Path,
+        driver,
+        curso_url: str,
+        max_tentativas=3,
+        organizar_por_aula=False,
+    ):
         self.download_dir = download_dir
         self.sessao = criar_sessao_download(driver, curso_url)
         self.max_tentativas = max_tentativas
+        self.organizar_por_aula = organizar_por_aula
         self.nomes_globais = {}
         self.urls_processadas = set()
         self.encontrados = 0
@@ -767,8 +864,21 @@ class GerenciadorDownloads:
         self.existentes = 0
         self.falhas = 0
 
-    def _nome_destino(self, item) -> str:
+    def _nome_destino(self, item) -> Path:
         tipo_nome = "Vídeo" if item["tipo"] == "video" else "PDF"
+        if self.organizar_por_aula and item["aula_num"] != 0:
+            subpasta_tipo = "videos" if item["tipo"] == "video" else "pdfs"
+            subpasta = Path(f"aula_{item['aula_num']:02d}") / subpasta_tipo
+            base_name = safe_filename(
+                f"{tipo_nome} {item['item_num']:02d} - {item['titulo']}"
+            )
+            extensao = item["extensao"]
+            chave = str(subpasta / base_name)
+            quantidade = self.nomes_globais.get(chave, 0) + 1
+            self.nomes_globais[chave] = quantidade
+            sufixo = f" ({quantidade})" if quantidade > 1 else ""
+            return subpasta / f"{base_name}{sufixo}{extensao}"
+
         origem = "Curso" if item["aula_num"] == 0 else f"Aula {item['aula_num']:02d}"
         base_name = safe_filename(
             f"{origem} - {tipo_nome} {item['item_num']:02d} - {item['titulo']}"
@@ -778,8 +888,8 @@ class GerenciadorDownloads:
         quantidade = self.nomes_globais.get(base_name, 0) + 1
         self.nomes_globais[base_name] = quantidade
         if quantidade > 1:
-            return f"{base_name} ({quantidade}){extensao}"
-        return f"{base_name}{extensao}"
+            return Path(f"{base_name} ({quantidade}){extensao}")
+        return Path(f"{base_name}{extensao}")
 
     def baixar(self, item) -> bool:
         url = item["url"]
@@ -792,6 +902,7 @@ class GerenciadorDownloads:
         final_name = self._nome_destino(item)
         destino = self.download_dir / final_name
         temporario = destino.with_suffix(destino.suffix + ".part")
+        destino.parent.mkdir(parents=True, exist_ok=True)
 
         if destino.exists() and destino.stat().st_size > 0:
             self.existentes += 1
@@ -884,39 +995,92 @@ def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
 def main():
     args = ler_argumentos()
     email, password = pedir_credenciais()
-    curso_id = pedir_curso_id()
+    curso_id = extrair_curso_id(args.curso_id) if args.curso_id else pedir_curso_id()
     curso_url = montar_curso_url(curso_id)
-    pasta_base = escolher_download_dir()
+    if args.pasta_curso:
+        pasta_base = args.pasta_curso.resolve()
+        if not pasta_base.is_dir():
+            raise RuntimeError(f"A pasta do curso não existe: {pasta_base}")
+        print(f"📁 Pasta existente do curso: {pasta_base}")
+    else:
+        pasta_base = escolher_download_dir()
     driver = create_edge_driver(pasta_base)
     try:
         do_login(driver, email, password)
 
         aulas = listar_aulas(driver, curso_url)
-        download_dir = criar_pasta_do_curso(pasta_base, driver, curso_id)
-        gerenciador = GerenciadorDownloads(download_dir, driver, curso_url)
-        out_txt = download_dir / "links_estrategia_conteudo.txt"
+        if args.aulas:
+            numeros_solicitados = set(args.aulas)
+            aulas = [aula for aula in aulas if aula["num"] in numeros_solicitados]
+            numeros_encontrados = {aula["num"] for aula in aulas}
+            faltantes = sorted(numeros_solicitados - numeros_encontrados)
+            if faltantes:
+                raise RuntimeError(
+                    "Aulas solicitadas não encontradas no curso: "
+                    + ", ".join(str(numero) for numero in faltantes)
+                )
+            print(
+                "🎯 Filtro de aulas: "
+                + ", ".join(f"Aula {aula['num']:02d}" for aula in aulas)
+            )
+
+        if args.pasta_curso:
+            download_dir = pasta_base
+        else:
+            download_dir = criar_pasta_do_curso(pasta_base, driver, curso_id)
+        gerenciador = GerenciadorDownloads(
+            download_dir,
+            driver,
+            curso_url,
+            organizar_por_aula=args.organizar_por_aula,
+        )
+        execucao_filtrada = bool(
+            args.pasta_curso
+            or args.aulas
+            or args.videos_selecionados
+            or args.somente_videos
+        )
+        nome_links = (
+            "links_estrategia_conteudo_retry.txt"
+            if execucao_filtrada
+            else "links_estrategia_conteudo.txt"
+        )
+        out_txt = download_dir / nome_links
 
         if args.somente_pdfs:
             print(
                 "\n📄 Modo somente PDFs ativado; nenhum vídeo será "
                 "procurado ou baixado."
             )
+        elif args.somente_videos:
+            print("\n🎬 Modo somente vídeos ativado; nenhum PDF será procurado.")
+            if args.videos_selecionados:
+                print(
+                    "   Vídeos selecionados: "
+                    + ", ".join(
+                        f"{numero:02d}" for numero in sorted(args.videos_selecionados)
+                    )
+                )
         else:
             print(
                 "\n⬇️ Modo completo: todos os PDFs e vídeos serão procurados e baixados."
             )
         print("   O download começará assim que cada arquivo for localizado.")
-        with open(out_txt, "w", encoding="utf-8") as arquivo_links:
-            arquivo_links.write("aula;tipo;numero;titulo;url\n")
-            arquivo_links.flush()
+        modo_links = "a" if execucao_filtrada else "w"
+        escrever_cabecalho = not out_txt.exists() or out_txt.stat().st_size == 0
+        with open(out_txt, modo_links, encoding="utf-8") as arquivo_links:
+            if escrever_cabecalho:
+                arquivo_links.write("aula;tipo;numero;titulo;url\n")
+                arquivo_links.flush()
 
             # A página geral do curso às vezes contém apostilas ou materiais
             # que não reaparecem dentro de nenhuma aula.
-            print("\n➡️ Procurando PDFs gerais na página do curso...")
-            for item in iterar_pdfs_da_aula_atual(
-                driver, 0, "Materiais gerais do curso"
-            ):
-                registrar_e_baixar(item, arquivo_links, gerenciador)
+            if not args.somente_videos and not args.aulas:
+                print("\n➡️ Procurando PDFs gerais na página do curso...")
+                for item in iterar_pdfs_da_aula_atual(
+                    driver, 0, "Materiais gerais do curso"
+                ):
+                    registrar_e_baixar(item, arquivo_links, gerenciador)
 
             for posicao, aula in enumerate(aulas, start=1):
                 num = aula["num"]
@@ -939,15 +1103,35 @@ def main():
                     f"(número identificado: {num:02d})"
                 )
 
-                fontes = [iterar_pdfs_da_aula_atual(driver, num, nome)]
+                fontes = []
+                if not args.somente_videos:
+                    fontes.append(iterar_pdfs_da_aula_atual(driver, num, nome))
                 if not args.somente_pdfs:
-                    fontes.append(iterar_videos_da_aula_atual(driver, num, nome))
+                    fontes.append(
+                        iterar_videos_da_aula_atual(
+                            driver,
+                            num,
+                            nome,
+                            videos_selecionados=args.videos_selecionados,
+                            tentativas_links=args.tentativas_links,
+                        )
+                    )
                 for fonte in fontes:
                     for item in fonte:
                         registrar_e_baixar(item, arquivo_links, gerenciador)
 
         print(f"\n✅ Links registrados continuamente em: {out_txt}")
         gerenciador.resumo()
+
+        if (
+            args.videos_selecionados
+            and gerenciador.encontrados < len(args.videos_selecionados)
+        ):
+            raise RuntimeError(
+                f"Foram localizados {gerenciador.encontrados} de "
+                f"{len(args.videos_selecionados)} vídeos solicitados. "
+                "Veja os avisos acima e execute o arquivo de tentativa novamente."
+            )
 
         print("\n✅ Processo completo.")
     finally:
