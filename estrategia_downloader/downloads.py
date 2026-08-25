@@ -149,6 +149,7 @@ class GerenciadorDownloads:
         self.baixados = 0
         self.existentes = 0
         self.falhas = 0
+        self.falhas_descoberta = []
         self.bytes_baixados = 0
         self.bytes_transferidos = 0
         self.bytes_existentes = 0
@@ -182,6 +183,16 @@ class GerenciadorDownloads:
         self.total_aulas = total_aulas
         if self.painel is not None:
             self.painel.atualizar(total_aulas=total_aulas)
+
+    def registrar_falha_descoberta(self, descricao: str):
+        """Registra uma lacuna visível na página sem contá-la mais de uma vez."""
+        descricao = " ".join(str(descricao).split())
+        if not descricao or descricao in self.falhas_descoberta:
+            return
+        self.falhas_descoberta.append(descricao)
+        self.falhas += 1
+        self._sincronizar_contadores()
+        print(f"      🚩 Conteúdo pendente: {descricao}")
 
     def iniciar_aula(self, posicao: int):
         self._verificar_cancelamento()
@@ -560,6 +571,7 @@ class GerenciadorDownloads:
             "baixados": self.baixados,
             "existentes": self.existentes,
             "falhas": self.falhas,
+            "falhas_descoberta": len(self.falhas_descoberta),
             "volume": formatar_tamanho(self.bytes_baixados),
             "tempo": formatar_duracao(decorrido),
             "velocidade_media": (
@@ -569,11 +581,19 @@ class GerenciadorDownloads:
 
     def resumo(self):
         dados = self.resumo_dados()
-        print("\n🎉 Varredura e downloads concluídos.")
+        if dados["falhas"]:
+            print("\n⚠️ Varredura concluída com conteúdo pendente.")
+        else:
+            print("\n🎉 Varredura e downloads concluídos sem pendências.")
         print(f"   Arquivos únicos encontrados: {dados['encontrados']}")
         print(f"   Baixados nesta execução: {dados['baixados']}")
         print(f"   Já existentes: {dados['existentes']}")
         print(f"   Falhas: {dados['falhas']}")
+        if dados["falhas_descoberta"]:
+            print(
+                "   Itens anunciados pelo site sem link: "
+                f"{dados['falhas_descoberta']}"
+            )
         print(f"   Volume concluído: {dados['volume']}")
         print(f"   Tempo desde o primeiro download: {dados['tempo']}")
         print(f"   Velocidade média da rede: {dados['velocidade_media']}")

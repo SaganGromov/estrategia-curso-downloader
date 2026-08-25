@@ -10,6 +10,10 @@ from .browser import BrowserStartupError
 from .utils import DestinoInvalidoError, EspacoInsuficienteError, sanitizar_texto
 
 
+class ConteudoIncompletoError(RuntimeError):
+    """A página anunciou conteúdo que não pôde ser localizado ou baixado."""
+
+
 def mensagem_usuario_para_erro(erro: Exception) -> str:
     if isinstance(
         erro,
@@ -19,6 +23,7 @@ def mensagem_usuario_para_erro(erro: Exception) -> str:
             AlertaRecorrenteError,
             DestinoInvalidoError,
             EspacoInsuficienteError,
+            ConteudoIncompletoError,
         ),
     ):
         return str(erro)

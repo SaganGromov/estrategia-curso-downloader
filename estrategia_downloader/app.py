@@ -25,11 +25,15 @@ from interface_web import DownloadCancelado, InterfaceWeb, SaidaPainel
 from .alerts import RecuperadorAlertas
 from .browser import create_edge_driver, diagnostico_browser
 from .config import (
+    DISCOVERY_MAX_ROUNDS,
+    DISCOVERY_SCROLL_PAUSE,
+    DISCOVERY_STABLE_ROUNDS,
     LOGIN_TIMEOUT,
     LOGIN_URL,
     SELENIUM_SHORT_WAIT,
     SELENIUM_WAIT_TIMEOUT,
     VIDEO_OPTIONS_TIMEOUT,
+    VIDEO_RECOVERY_PASSES,
     VIDEO_SELECTION_RETRIES,
     pasta_download_padrao,
 )
@@ -38,7 +42,7 @@ from .discovery import classificar_material as classificar_material_puro
 from .downloads import (
     GerenciadorDownloads as GerenciadorDownloadsNovo,
 )
-from .errors import mensagem_usuario_para_erro
+from .errors import ConteudoIncompletoError, mensagem_usuario_para_erro
 from .utils import (
     chave_deduplicacao_url,
     formatar_tamanho,
@@ -61,6 +65,10 @@ def configurar_saida_terminal():
 configurar_saida_terminal()
 
 DEFAULT_DOWNLOAD_DIR = pasta_download_padrao()
+VIDEO_TITLE_SELECTOR = (
+    "span.VideoItem-info-title, [class*='VideoItem-info-title'], "
+    "[class*='VideoItem'] [class*='title']"
+)
 
 
 def ler_argumentos():
@@ -156,6 +164,141 @@ def _executar_selenium(alertas, operacao, descricao: str):
     if alertas is None:
         return operacao()
     return alertas.executar_leitura(operacao, descricao=descricao)
+
+
+def _assinatura_elementos(elementos, atributos=()) -> tuple:
+    """Cria uma assinatura ordenada para detectar listas React ainda crescendo."""
+    assinatura = []
+    for elemento in elementos:
+        try:
+            valores = [(elemento.text or "").strip()]
+            valores.extend((elemento.get_attribute(nome) or "").strip() for nome in atributos)
+            assinatura.append(tuple(valores))
+        except StaleElementReferenceException:
+            assinatura.append(("<stale>",))
+    return tuple(assinatura)
+
+
+def _clicar_controle_carregar_mais(driver, alertas=None) -> bool:
+    """Aciona um controle explícito de paginação sem clicar em links de conteúdo."""
+    controles = _executar_selenium(
+        alertas,
+        lambda: driver.find_elements(
+            By.CSS_SELECTOR,
+            "button, [role='button'], a[class*='load'], a[class*='Load']",
+        ),
+        "procurar controle para carregar mais conteúdo",
+    )
+    padrao = re.compile(
+        r"^(?:carregar|mostrar) mais(?: aulas| videos| itens| conteudo)?$|"
+        r"^ver mais (?:aulas|videos|itens|conteudo)$|^mais aulas$"
+    )
+    for controle in controles:
+        try:
+            texto = normalizar_texto(
+                " ".join(
+                    filter(
+                        None,
+                        (
+                            controle.text,
+                            controle.get_attribute("aria-label"),
+                            controle.get_attribute("title"),
+                        ),
+                    )
+                )
+            )
+            if not padrao.fullmatch(texto):
+                continue
+            if not controle.is_displayed() or (
+                hasattr(controle, "is_enabled") and not controle.is_enabled()
+            ):
+                continue
+
+            def clicar(elemento=controle):
+                try:
+                    elemento.click()
+                except (ElementClickInterceptedException, ElementNotInteractableException):
+                    driver.execute_script("arguments[0].click();", elemento)
+
+            _executar_selenium(alertas, clicar, "carregar mais conteúdo")
+            return True
+        except (NoSuchElementException, StaleElementReferenceException):
+            continue
+    return False
+
+
+def _carregar_lista_dinamica(
+    driver,
+    by,
+    seletor: str,
+    *,
+    atributos=(),
+    alertas=None,
+    descricao="conteúdo dinâmico",
+    max_rodadas=DISCOVERY_MAX_ROUNDS,
+    rodadas_estaveis=DISCOVERY_STABLE_ROUNDS,
+    pausa=DISCOVERY_SCROLL_PAUSE,
+):
+    """Rola/pagina até a lista e a altura da página ficarem realmente estáveis."""
+    assinatura_anterior = None
+    altura_anterior = None
+    estaveis = 0
+
+    for _rodada in range(max_rodadas):
+        elementos = _executar_selenium(
+            alertas,
+            lambda: driver.find_elements(by, seletor),
+            f"ler {descricao}",
+        )
+        assinatura = _assinatura_elementos(elementos, atributos)
+        altura = _executar_selenium(
+            alertas,
+            lambda: driver.execute_script(
+                "return Math.max(document.body.scrollHeight, "
+                "document.documentElement.scrollHeight);"
+            ),
+            f"medir {descricao}",
+        )
+        clicou = _clicar_controle_carregar_mais(driver, alertas)
+
+        if elementos:
+            ultimo = elementos[-1]
+            _executar_selenium(
+                alertas,
+                lambda elemento=ultimo: driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'end'});", elemento
+                ),
+                f"rolar até o fim de {descricao}",
+            )
+        _executar_selenium(
+            alertas,
+            lambda: driver.execute_script(
+                "window.scrollTo(0, Math.max(document.body.scrollHeight, "
+                "document.documentElement.scrollHeight));"
+            ),
+            f"rolar a página de {descricao}",
+        )
+
+        if (
+            not clicou
+            and assinatura == assinatura_anterior
+            and altura == altura_anterior
+        ):
+            estaveis += 1
+        else:
+            estaveis = 0
+        assinatura_anterior = assinatura
+        altura_anterior = altura
+
+        if estaveis >= rodadas_estaveis:
+            break
+        time.sleep(pausa)
+
+    return _executar_selenium(
+        alertas,
+        lambda: driver.find_elements(by, seletor),
+        f"confirmar lista completa de {descricao}",
+    )
 
 
 def do_login(
@@ -258,10 +401,13 @@ def listar_aulas(driver, curso_url: str, alertas=None):
         # TimeoutException genérico.
         pass
 
-    itens = _executar_selenium(
-        alertas,
-        lambda: driver.find_elements(By.XPATH, "//a[contains(@href,'/aulas/')]"),
-        "ler a lista de aulas",
+    itens = _carregar_lista_dinamica(
+        driver,
+        By.XPATH,
+        "//a[contains(@href,'/aulas/')]",
+        atributos=("href",),
+        alertas=alertas,
+        descricao="aulas do curso",
     )
     if not itens:
         raise RuntimeError(
@@ -524,7 +670,7 @@ def _selecionar_video_e_obter_opcoes(driver, indice: int, alertas=None):
             alertas.resolver_pendente(permitir_desconhecido=True)
         videos = _executar_selenium(
             alertas,
-            lambda: driver.find_elements(By.CSS_SELECTOR, "span.VideoItem-info-title"),
+            lambda: driver.find_elements(By.CSS_SELECTOR, VIDEO_TITLE_SELECTOR),
             "reler vídeos da aula",
         )
         if indice >= len(videos):
@@ -590,91 +736,147 @@ def _selecionar_video_e_obter_opcoes(driver, indice: int, alertas=None):
     return titulo_video, []
 
 
-def iterar_videos_da_aula_atual(driver, aula_num: int, aula_nome: str, alertas=None):
-    """Encontra e entrega cada vídeo assim que o respectivo link aparece."""
-    wait = WebDriverWait(driver, SELENIUM_SHORT_WAIT)
+def _carregar_videos_da_aula(driver, alertas=None):
+    return _carregar_lista_dinamica(
+        driver,
+        By.CSS_SELECTOR,
+        VIDEO_TITLE_SELECTOR,
+        atributos=("data-video-id", "id"),
+        alertas=alertas,
+        descricao="vídeos da aula",
+    )
 
-    try:
-        _executar_selenium(
-            alertas,
-            lambda: wait.until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "span.VideoItem-info-title")
-                )
-            ),
-            "localizar vídeos da aula",
-        )
-    except TimeoutException:
+
+def _reabrir_aula_para_recuperar_videos(driver, url_aula: str, alertas=None):
+    if alertas is None:
+        driver.get(url_aula)
+    else:
+        alertas.resolver_pendente(permitir_desconhecido=True)
+        alertas.navegar(url_aula, descricao="reabrir a aula com vídeos pendentes")
+    aguardar_conteudo_aula(driver, alertas)
+    return _carregar_videos_da_aula(driver, alertas)
+
+
+def iterar_videos_da_aula_atual(
+    driver,
+    aula_num: int,
+    aula_nome: str,
+    alertas=None,
+    registrar_falha=None,
+):
+    """Entrega todos os vídeos e reabre a aula para recuperar links ausentes."""
+    videos = _carregar_videos_da_aula(driver, alertas)
+    if not videos:
         print(
-            "   ⚠️ Não encontrei lista de vídeos nessa aula, pode ser aula só com PDF."
+            "   ℹ️ Não encontrei lista de vídeos nessa aula; ela pode conter "
+            "somente material escrito."
         )
         return
 
-    videos = _executar_selenium(
-        alertas,
-        lambda: driver.find_elements(By.CSS_SELECTOR, "span.VideoItem-info-title"),
-        "ler vídeos da aula",
-    )
     total = len(videos)
-    print(f"   🔎 Vídeos encontrados: {total}")
-
+    print(f"   🔎 Vídeos encontrados após estabilizar a página: {total}")
+    url_aula = driver.current_url
+    pendentes = set(range(total))
+    titulos = {}
     nomes_usados_nesta_aula = {}
 
-    for idx in range(total):
-        try:
-            titulo_video, opcoes = _selecionar_video_e_obter_opcoes(
-                driver, idx, alertas
-            )
-            candidatos = [(resolucao, href) for resolucao, href in opcoes if resolucao]
-            links_sem_resolucao = [href for resolucao, href in opcoes if not resolucao]
-
-            if candidatos:
-                resolucao_escolhida, href = max(candidatos, key=lambda item: item[0])
-                print(
-                    f"      🎞️ Vídeo {idx + 1:02d}: melhor qualidade disponível: "
-                    f"{resolucao_escolhida}p."
-                )
-            elif links_sem_resolucao:
-                href = links_sem_resolucao[0]
-                print(
-                    f"      ℹ️ Vídeo {idx + 1:02d}: usando o link disponível; "
-                    "a resolução não foi informada."
-                )
-            else:
-                print(
-                    f"      ⚠️ Vídeo {idx + 1:02d}: nenhum link de download "
-                    f"apareceu após {VIDEO_SELECTION_RETRIES} tentativas."
-                )
-                continue
-
-            base_title = safe_filename(titulo_video)
-            if base_title in nomes_usados_nesta_aula:
-                c = nomes_usados_nesta_aula[base_title] + 1
-                nomes_usados_nesta_aula[base_title] = c
-                base_title = f"{base_title} ({c})"
-            else:
-                nomes_usados_nesta_aula[base_title] = 1
-
+    for passagem in range(1, VIDEO_RECOVERY_PASSES + 1):
+        if passagem > 1:
             print(
-                f"      ✅ Vídeo {idx + 1:02d}: {base_title} -> {sanitizar_url(href)}"
+                f"   🔄 Recuperação de vídeos pendentes "
+                f"({passagem}/{VIDEO_RECOVERY_PASSES}): reabrindo a aula."
             )
+            videos = _reabrir_aula_para_recuperar_videos(
+                driver, url_aula, alertas
+            )
+            if len(videos) > total:
+                novos = set(range(total, len(videos)))
+                pendentes.update(novos)
+                total = len(videos)
+                print(f"   ➕ A página revelou mais vídeos; novo total: {total}")
 
-            yield {
-                "tipo": "video",
-                "aula_num": aula_num,
-                "aula_nome": safe_filename(aula_nome),
-                "item_num": idx + 1,
-                "titulo": base_title,
-                "extensao": ".mp4",
-                "url": href,
-            }
-        except (
-            NoSuchElementException,
-            StaleElementReferenceException,
-            ElementNotInteractableException,
-            TimeoutException,
-        ) as e:
-            print(f"      ❌ Erro no vídeo {idx + 1:02d}: {e}")
+        for idx in sorted(pendentes):
+            if idx < len(videos):
+                try:
+                    titulos[idx] = (videos[idx].text or f"video_{idx + 1}").strip()
+                except StaleElementReferenceException:
+                    pass
+            try:
+                titulo_video, opcoes = _selecionar_video_e_obter_opcoes(
+                    driver, idx, alertas
+                )
+                titulos[idx] = titulo_video
+                candidatos = [
+                    (resolucao, href)
+                    for resolucao, href in opcoes
+                    if resolucao
+                ]
+                links_sem_resolucao = [
+                    href for resolucao, href in opcoes if not resolucao
+                ]
+
+                if candidatos:
+                    resolucao_escolhida, href = max(
+                        candidatos, key=lambda item: item[0]
+                    )
+                    print(
+                        f"      🎞️ Vídeo {idx + 1:02d}: melhor qualidade "
+                        f"disponível: {resolucao_escolhida}p."
+                    )
+                elif links_sem_resolucao:
+                    href = links_sem_resolucao[0]
+                    print(
+                        f"      ℹ️ Vídeo {idx + 1:02d}: usando o link disponível; "
+                        "a resolução não foi informada."
+                    )
+                else:
+                    continue
+
+                base_title = safe_filename(titulo_video)
+                if base_title in nomes_usados_nesta_aula:
+                    quantidade = nomes_usados_nesta_aula[base_title] + 1
+                    nomes_usados_nesta_aula[base_title] = quantidade
+                    base_title = f"{base_title} ({quantidade})"
+                else:
+                    nomes_usados_nesta_aula[base_title] = 1
+
+                print(
+                    f"      ✅ Vídeo {idx + 1:02d}: {base_title} -> "
+                    f"{sanitizar_url(href)}"
+                )
+                pendentes.remove(idx)
+                yield {
+                    "tipo": "video",
+                    "aula_num": aula_num,
+                    "aula_nome": safe_filename(aula_nome),
+                    "item_num": idx + 1,
+                    "titulo": base_title,
+                    "extensao": ".mp4",
+                    "url": href,
+                }
+            except (
+                NoSuchElementException,
+                StaleElementReferenceException,
+                ElementNotInteractableException,
+                TimeoutException,
+            ) as erro:
+                print(
+                    f"      ↪️ Vídeo {idx + 1:02d} continuará pendente nesta "
+                    f"passagem: {erro}"
+                )
+
+        if not pendentes:
+            break
+
+    for idx in sorted(pendentes):
+        titulo = safe_filename(titulos.get(idx, f"video_{idx + 1}"))
+        descricao = (
+            f"Aula {aula_num:02d}, vídeo {idx + 1:02d} ({titulo}): "
+            f"nenhum link apareceu após {VIDEO_RECOVERY_PASSES} passagens"
+        )
+        print(f"      ⚠️ {descricao}.")
+        if registrar_falha is not None:
+            registrar_falha(descricao)
 
 
 def _texto_link(elemento) -> str:
@@ -795,6 +997,7 @@ def iterar_materiais_da_aula_atual(
     aula_nome: str,
     tipos_permitidos=None,
     alertas=None,
+    registrar_falha=None,
 ):
     """Entrega PDFs, slides, mapas mentais e outros materiais sem duplicatas."""
     vistos = set()
@@ -806,10 +1009,21 @@ def iterar_materiais_da_aula_atual(
         "[data-url], [data-download-url], [data-file-url], [onclick], "
         "button, [role='button'], [class*='download'], [class*='Download']"
     )
-    elementos = _executar_selenium(
-        alertas,
-        lambda: driver.find_elements(By.CSS_SELECTOR, seletor),
-        "localizar materiais da aula",
+    elementos = _carregar_lista_dinamica(
+        driver,
+        By.CSS_SELECTOR,
+        seletor,
+        atributos=(
+            "href",
+            "src",
+            "data",
+            "data-href",
+            "data-url",
+            "data-download-url",
+            "data-file-url",
+        ),
+        alertas=alertas,
+        descricao="materiais da aula",
     )
     for elemento in elementos:
         try:
@@ -833,6 +1047,10 @@ def iterar_materiais_da_aula_atual(
     print(f"   📚 Materiais encontrados: {len(encontrados)}")
     for descricao in sorted(sem_url):
         print(f"      ⚠️ Material reconhecido, mas sem URL acessível: {descricao}")
+        if registrar_falha is not None:
+            registrar_falha(
+                f"Aula {aula_num:02d}, material sem link acessível: {descricao}"
+            )
 
     rotulos = {
         "pdf": "PDF",
@@ -872,6 +1090,18 @@ def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
     )
     arquivo_links.flush()
     gerenciador.baixar(item)
+
+
+def garantir_curso_completo(gerenciador: GerenciadorDownloads):
+    """Impede que uma execução com qualquer pendência seja anunciada como sucesso."""
+    if not gerenciador.falhas:
+        return
+    raise ConteudoIncompletoError(
+        "A varredura terminou com "
+        f"{gerenciador.falhas} pendência(s). Os arquivos concluídos foram "
+        "preservados, mas o curso não será marcado como completo. Consulte "
+        "os itens 🚩 no diagnóstico e execute novamente para recuperá-los."
+    )
 
 
 def executar_download(args, configuracao, painel: InterfaceWeb):
@@ -957,6 +1187,7 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
                 "Materiais gerais do curso",
                 tipos_permitidos,
                 alertas,
+                gerenciador.registrar_falha_descoberta,
             ):
                 registrar_e_baixar(item, arquivo_links, gerenciador)
 
@@ -980,12 +1211,23 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
 
                 fontes = [
                     iterar_materiais_da_aula_atual(
-                        driver, num, nome, tipos_permitidos, alertas
+                        driver,
+                        num,
+                        nome,
+                        tipos_permitidos,
+                        alertas,
+                        gerenciador.registrar_falha_descoberta,
                     )
                 ]
                 if not modo_reduzido:
                     fontes.append(
-                        iterar_videos_da_aula_atual(driver, num, nome, alertas)
+                        iterar_videos_da_aula_atual(
+                            driver,
+                            num,
+                            nome,
+                            alertas,
+                            gerenciador.registrar_falha_descoberta,
+                        )
                     )
                 for fonte in fontes:
                     for item in fonte:
@@ -995,6 +1237,7 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
 
         print(f"\n✅ Links registrados continuamente em: {out_txt}")
         gerenciador.resumo()
+        garantir_curso_completo(gerenciador)
         print("\n✅ Processo completo.")
         return {
             "resumo": gerenciador.resumo_dados(),

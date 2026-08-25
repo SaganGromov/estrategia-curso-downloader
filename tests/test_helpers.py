@@ -100,6 +100,11 @@ class DriverMateriaisFake:
     def find_elements(self, *_args):
         return self.elementos
 
+    def execute_script(self, script, *_args):
+        if script.startswith("return Math.max"):
+            return 100
+        return None
+
 
 class RespostaFake:
     headers = {"Content-Length": "6", "Content-Type": "application/pdf"}
