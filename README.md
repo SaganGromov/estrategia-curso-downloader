@@ -1,162 +1,245 @@
 # Estratégia Curso Downloader
 
-Baixa os vídeos e PDFs dos cursos aos quais a sua conta do Estratégia Concursos tem acesso, organizando o conteúdo por curso e aula.
+Aplicativo para baixar, com uma interface gráfica local, os conteúdos de cursos aos quais sua conta do Estratégia Concursos possui acesso.
 
-> Este projeto é um **fork aprimorado** de [suygetsu-bot/estrategia-video-downloader](https://github.com/suygetsu-bot/estrategia-video-downloader). Ele preserva a ideia original e acrescenta uma experiência guiada, PDFs, escolha automática da melhor qualidade, downloads imediatos, retomada e organização automática.
+Este projeto é um fork aprimorado de [`suygetsu-bot/estrategia-video-downloader`](https://github.com/suygetsu-bot/estrategia-video-downloader). O fork acrescenta painel gráfico, coleta de materiais além dos vídeos, instalação automática dos componentes internos, progresso detalhado, retomada de transferências e diversas proteções de confiabilidade.
 
-## O que esta versão faz
+> Use somente com conteúdos aos quais você possui acesso legítimo e respeite os termos da plataforma e a legislação aplicável. O projeto não contorna login, captcha, 2FA ou permissões da conta.
 
-- abre janelas para solicitar login, ID/URL do curso e pasta de destino;
-- não salva sua senha em arquivo — ela permanece somente na memória enquanto o programa roda;
-- abre o Microsoft Edge para login, captcha ou autenticação em duas etapas;
-- procura PDFs na página geral do curso e dentro de cada aula;
-- baixa cada vídeo na **maior resolução disponibilizada pelo site**;
-- começa a baixar assim que encontra cada arquivo, sem esperar a varredura terminar;
-- mostra progresso, tamanho, tentativas, arquivos existentes e falhas;
-- evita links duplicados e mantém downloads incompletos com a extensão `.part`;
-- cria uma subpasta com o nome do curso;
-- registra os links encontrados em `links_estrategia_conteudo.txt`;
-- usa o Selenium Manager para cuidar do EdgeDriver automaticamente.
-
-## Uso simples no Windows
+## Como usar no Windows
 
 Você precisa apenas de:
 
-- Windows 10 ou 11;
-- [Python 3](https://www.python.org/downloads/windows/) instalado com a opção **Add Python to PATH** marcada;
+- Windows 10 ou Windows 11;
 - Microsoft Edge instalado;
-- uma conta do Estratégia com acesso legítimo ao curso;
-- conexão com a internet.
+- conexão com a internet;
+- permissão normal para gravar em sua própria pasta de usuário.
 
-Não é necessário abrir o PowerShell como administrador, configurar variáveis de ambiente ou baixar o `msedgedriver.exe` manualmente.
+Você **não precisa** instalar Python, pip, Selenium, WebDriver, Git ou ferramentas de programação. Não é necessário executar nada como Administrador nem alterar o `PATH`.
 
-### 1. Baixe o projeto
+### 1. Baixe e extraia o aplicativo
 
-Na página deste repositório, clique em **Code → Download ZIP** e extraia o ZIP para uma pasta comum, como Documentos.
+Na página do GitHub, use **Code → Download ZIP**. Depois clique com o botão direito no ZIP, escolha **Extrair tudo** e abra a pasta extraída.
 
-### 2. Inicie com duplo clique
+Não execute o aplicativo diretamente de dentro da visualização do ZIP. Caminhos com espaços, acentos e parênteses são aceitos.
 
-Para baixar vídeos e PDFs, dê duplo clique em:
+### 2. Dê duplo clique em `iniciar.bat`
 
-```text
-iniciar.bat
-```
-
-Para baixar somente os PDFs, use:
+Na primeira execução, uma janela mostrará o preparo automático:
 
 ```text
-iniciar_somente_pdfs.bat
+Estratégia Curso Downloader
+
+[1/5] Verificando os componentes necessários...
+[2/5] Preparando o Python interno...
+[3/5] Preparando o ambiente do aplicativo...
+[4/5] Instalando componentes necessários...
+[5/5] Iniciando o Estratégia Curso Downloader...
 ```
 
-Na primeira execução, o iniciador instala automaticamente as duas dependências Python necessárias.
-
-### 3. Responda às janelas
-
-O programa solicitará, nesta ordem:
-
-1. e-mail e senha da conta;
-2. ID do curso ou URL completa do curso;
-3. pasta-base onde o conteúdo será salvo.
-
-Quando o Edge abrir, clique em **Entrar** e conclua captcha ou autenticação em duas etapas, se aparecer. O programa detecta o painel automaticamente; não é preciso voltar ao terminal e apertar Enter.
-
-## Como encontrar o ID do curso
-
-Abra o curso no navegador. Em uma URL como:
+O aplicativo prepara uma cópia privada do Python quando necessária e um ambiente isolado em:
 
 ```text
-https://www.estrategiaconcursos.com.br/app/dashboard/cursos/393267/aulas
+%LOCALAPPDATA%\EstrategiaCursoDownloader\
 ```
 
-o ID é `393267`. Você pode informar apenas o número ou colar a URL inteira na janela.
+Isso não modifica o `PATH`, outras instalações de Python nem configurações globais do Windows. A instalação é feita no perfil do usuário, sem elevação. As próximas inicializações reutilizam o ambiente e normalmente são bem mais rápidas.
 
-## Organização dos arquivos
+### 3. Use o painel
 
-Ao escolher, por exemplo, `D:\Meus estudos`, o programa cria a pasta do curso:
+No painel aberto no Edge:
+
+1. informe o e-mail e a senha da conta;
+2. informe o ID do curso, como `393267`, ou cole a URL completa;
+3. aceite a pasta padrão em `Downloads\Estrategia` ou use **Alterar pasta…**;
+4. escolha o modo;
+5. clique em **Abrir login e iniciar**.
+
+Uma janela controlada do Edge será aberta com os campos preenchidos. Clique em **Entrar** e conclua captcha ou verificação em duas etapas, se solicitado. O painel detecta o login e prossegue automaticamente. Não volte ao terminal nem pressione Enter nele.
+
+## Modos de download
+
+**Conteúdo completo**, que é o padrão:
+
+- vídeos na maior qualidade anunciada pelo site;
+- PDFs e livros eletrônicos, incluindo versões original, simplificada e “marcação dos aprovados”;
+- slides;
+- mapas mentais;
+- outros anexos reconhecidos.
+
+**Materiais de estudo**:
+
+- PDFs;
+- slides;
+- mapas mentais;
+- sem vídeos.
+
+O atalho `iniciar_pdfs_e_slides.bat` abre o mesmo painel com o segundo modo já selecionado.
+
+## Durante o download
+
+Os materiais são baixados assim que aparecem; o programa não espera terminar a varredura de todo o curso. O painel mostra:
+
+- fase atual e aula atual;
+- item atual, porcentagem, velocidade e ETA;
+- progresso dos arquivos já encontrados;
+- estimativa aproximada do curso, enquanto ainda há aulas desconhecidas;
+- arquivos encontrados, baixados, existentes e com falha;
+- atividade em tempo real;
+- espaço livre no destino.
+
+O botão **Cancelar download** pede confirmação, interrompe a transferência cooperativamente, fecha o Edge controlado e preserva arquivos completos e `.part` válidos.
+
+Ao concluir, o painel apresenta um resumo e os botões **Abrir pasta**, **Ver detalhes**, **Copiar diagnóstico** e **Encerrar interface**.
+
+## Pastas de saída
+
+Cada execução normal cria uma pasta nova, sem reutilizar a pasta de outra execução:
 
 ```text
-D:\Meus estudos\Nome do curso\
-├── Aula 01 - PDF 01 - Livro digital.pdf
-├── Aula 01 - Vídeo 01 - Apresentação.mp4
-├── Aula 01 - Vídeo 02 - Conteúdo.mp4
-├── links_estrategia_conteudo.txt
-└── algum-download-interrompido.mp4.part
+CURSO_ESTRATEGIA_<ID>_<UNIX_TIMESTAMP>
 ```
 
-Em uma nova execução na mesma pasta, arquivos completos já existentes são ignorados. Arquivos `.part` podem ser baixados novamente com segurança.
+Exemplo:
 
-## Uso pelo terminal (opcional)
-
-Instale as dependências:
-
-```powershell
-py -m pip install -r requirements.txt
+```text
+CURSO_ESTRATEGIA_393267_1723680000
+├── aula_00
+│   ├── videos
+│   └── pdfs
+├── aula_01
+│   ├── videos
+│   └── pdfs
+├── aula_02
+│   ├── videos
+│   └── pdfs
+└── links_estrategia_conteudo.txt
 ```
 
-Baixe tudo:
+Cada aula recebe suas próprias pastas `videos` e `pdfs`, inclusive a
+`aula_00`. PDFs, slides e mapas mentais ficam em `pdfs`. Anexos que não sejam
+vídeos nem documentos PDF ficam em `outros_materiais`, criada somente quando
+necessária. Assim, os arquivos de uma aula não ficam misturados com os das
+demais.
 
-```powershell
-py .\estrategia_download_edge_any.py
+Essa convenção é intencional. Falhas transitórias durante a mesma execução retomam o `.part` com HTTP `Range` quando o servidor permite. Se o servidor ignorar a faixa, o arquivo é reiniciado com segurança; uma resposta inconsistente nunca é anexada cegamente.
+
+## Instalação automática e segurança
+
+O bootstrap usa uma versão de Python explicitamente fixada em `bootstrap-config.json` e dependências testadas em `requirements.lock.txt`.
+
+Antes de executar um instalador do Python, ele valida:
+
+- a origem oficial `python.org`;
+- o SHA-256 esperado;
+- a assinatura Authenticode da Python Software Foundation.
+
+Os logs técnicos ficam em:
+
+```text
+%LOCALAPPDATA%\EstrategiaCursoDownloader\logs\
 ```
 
-Baixe somente PDFs:
+Se o runtime, o ambiente virtual ou uma instalação de pacotes estiver incompleta, o bootstrap tenta reparar ou recriar apenas os componentes privados do aplicativo. Mudanças no arquivo de dependências são detectadas por hash.
 
-```powershell
-py .\estrategia_download_edge_any.py --somente-pdfs
-```
+## Privacidade
 
-Consulte as opções:
+- a senha é mantida somente em memória durante a autenticação e depois apagada do estado da aplicação;
+- senha, cookies, cabeçalhos de autorização e token da interface não entram no diagnóstico;
+- parâmetros sensíveis de URLs são removidos de logs e do arquivo informativo de links, mas preservados internamente na requisição real;
+- a interface atende somente em `127.0.0.1`, exige uma sessão aleatória e usa cabeçalhos restritivos;
+- o token inicial é trocado por um cookie local `HttpOnly` e removido da barra de endereço.
 
-```powershell
-py .\estrategia_download_edge_any.py --help
-```
+## Mensagens inesperadas do site
 
-## Configuração avançada
+O site às vezes abre um alerta nativo de um assistente virtual não configurado. O aplicativo reconhece esse alerta irrelevante, fecha-o, registra um aviso curto e retoma a operação segura sem reiniciar o curso ou perder arquivos já concluídos.
 
-As janelas são o comportamento padrão. Se desejar automatizar parte do preenchimento, estas variáveis continuam disponíveis:
-
-| Variável | Uso |
-|---|---|
-| `ESTRATEGIA_EMAIL` | Evita a janela de e-mail |
-| `ESTRATEGIA_PASSWORD` | Evita a janela de senha |
-| `ESTRATEGIA_CURSO_ID` | Preenche inicialmente a janela do curso |
-| `DOWNLOAD_DIR` | Define a pasta inicial do seletor |
-| `ESTRATEGIA_LOGIN_TIMEOUT` | Tempo máximo de login em segundos; padrão: 600 |
-| `ESTRATEGIA_EDGE_DRIVER` | Caminho de um EdgeDriver manual, se você não quiser usar o Selenium Manager |
-
-Exemplo temporário no PowerShell:
-
-```powershell
-$env:ESTRATEGIA_EMAIL = "voce@exemplo.com"
-$env:ESTRATEGIA_PASSWORD = "sua-senha"
-py .\estrategia_download_edge_any.py
-```
-
-Evite gravar sua senha em scripts, no README ou em arquivos versionados.
+Alertas desconhecidos não são descartados silenciosamente. O texto é preservado de forma sanitizada; se a mensagem voltar a impedir a operação, o download para com uma explicação compreensível e mantém os arquivos existentes.
 
 ## Solução de problemas
 
-### O Edge não abre
+### “Alguns arquivos do aplicativo não foram encontrados”
 
-Atualize o Microsoft Edge e confirme que há acesso à internet. O Selenium Manager precisa obter um driver compatível na primeira execução. Usuários avançados podem definir `ESTRATEGIA_EDGE_DRIVER` com um executável próprio.
+Extraia o ZIP inteiro e execute `iniciar.bat` na pasta extraída. Não copie somente o `.bat`.
 
-### O login fica aguardando
+### Microsoft Edge não foi encontrado
 
-Veja se o Edge está esperando clique em **Entrar**, captcha ou autenticação em duas etapas. O limite padrão é de dez minutos.
+O Edge é o único navegador suportado nesta versão. Instale-o pelo site oficial da Microsoft e tente novamente. O Selenium Manager obtém automaticamente o Edge WebDriver compatível; não baixe `msedgedriver.exe` manualmente.
 
-### Nenhuma aula ou PDF foi encontrado
+### Não foi possível baixar Python ou componentes
 
-Confirme o ID informado e o acesso da conta. O site pode alterar sua interface; nesse caso, abra uma issue com a mensagem exibida e, sem expor credenciais, uma descrição da tela.
+Confira a conexão e tente novamente. Proxy corporativo, firewall, AppLocker, antivírus ou políticas da empresa podem bloquear downloads ou execução. A mensagem mostra o local do `bootstrap.log`, que contém os detalhes técnicos.
 
-### Um arquivo falhou
+### O curso não tem aulas ou materiais
 
-O programa tenta cada download três vezes e apresenta um resumo final. Execute novamente usando a mesma pasta: arquivos completos serão ignorados e os restantes serão tentados de novo.
+Confira o ID/URL, confirme que o login terminou e verifique se a conta realmente possui acesso ao curso.
 
-## Uso responsável
+### Disco sem espaço
 
-Use esta ferramenta somente para conteúdos aos quais você tem acesso autorizado e respeite os termos da plataforma e os direitos autorais. Este projeto não é afiliado nem endossado pelo Estratégia Concursos.
+Escolha outro destino ou libere espaço. Arquivos completos não são apagados automaticamente.
 
-## Créditos
+## Uso avançado opcional
 
-- Projeto original: [suygetsu-bot/estrategia-video-downloader](https://github.com/suygetsu-bot/estrategia-video-downloader)
-- Este fork: melhorias de usabilidade, autenticação guiada, parametrização do curso, PDFs, melhor qualidade disponível, progresso e organização de arquivos.
+O fluxo normal não exige terminal. Para quem já usa Python, os pontos de entrada históricos continuam disponíveis:
+
+```powershell
+py .\estrategia_download_edge_any.py
+py .\estrategia_download_edge_any.py --pdfs-e-slides
+```
+
+Variáveis de ambiente preservadas:
+
+```text
+ESTRATEGIA_EMAIL
+ESTRATEGIA_PASSWORD
+ESTRATEGIA_CURSO_ID
+DOWNLOAD_DIR
+ESTRATEGIA_LOGIN_TIMEOUT
+ESTRATEGIA_EDGE_DRIVER
+ESTRATEGIA_DEBUG
+```
+
+`ESTRATEGIA_EDGE_DRIVER` é apenas uma compatibilidade avançada. Usuários comuns devem deixar o Selenium Manager cuidar do driver.
+
+## Arquitetura
+
+```text
+iniciar.bat
+└── bootstrap.ps1
+    ├── Python/runtime gerenciado
+    ├── ambiente isolado e dependências fixadas
+    └── estrategia_download_edge_any.py
+        └── estrategia_downloader/
+            ├── app.py          autenticação, varredura e orquestração
+            ├── alerts.py       recuperação de alertas do Edge
+            ├── browser.py      criação confiável do Edge
+            ├── discovery.py    classificação e parsing testável
+            ├── downloads.py    HTTP, retomada, disco e progresso
+            ├── diagnostics.py  relatório sanitizado
+            ├── errors.py       mensagens amigáveis
+            └── utils.py        nomes, URLs e utilitários
+```
+
+`interface_web.py` mantém o servidor local e o estado; `interface/` contém HTML, CSS e JavaScript sem frameworks externos.
+
+## Testes
+
+Os testes não usam credenciais reais e não acessam cursos reais. Eles cobrem:
+
+- bootstrap, metadados, launchers e caminhos Windows complexos;
+- API local, autenticação, modos, cancelamento e estados finais;
+- fixtures HTML sanitizados de aulas, vídeos e materiais;
+- nomes reservados e caracteres especiais do Windows;
+- URLs sensíveis e duplicatas;
+- transferências novas e retomadas HTTP válidas/inválidas;
+- alerta do assistente virtual, inclusive a transição da Aula 11 para a Aula 12.
+
+O CI principal roda no Windows com a mesma combinação fixada de Python e dependências. Há workflows separados para o bootstrap e para uma integração periódica com Edge real.
+
+## Limitações conhecidas
+
+- somente Microsoft Edge é suportado atualmente;
+- mudanças futuras no HTML do Estratégia podem exigir atualização dos seletores;
+- redes ou políticas corporativas podem impedir downloads ou execução, mesmo sem necessidade de Administrador;
+- a suíte automatizada não autentica em uma conta real e não baixa um curso real;
+- URLs temporárias podem expirar no servidor e exigir uma nova autenticação.

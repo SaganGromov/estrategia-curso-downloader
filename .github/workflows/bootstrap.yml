@@ -1,0 +1,58 @@
+name: Bootstrap limpo
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "bootstrap.ps1"
+      - "bootstrap-config.json"
+      - "requirements.lock.txt"
+      - "iniciar.bat"
+      - ".github/workflows/bootstrap.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap-isolado:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      ESTRATEGIA_BOOTSTRAP_NO_DIALOG: "1"
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v7
+
+      - name: Definir pasta privada de teste
+        shell: pwsh
+        run: |
+          "ESTRATEGIA_APP_HOME=$env:RUNNER_TEMP\Estrategia Bootstrap Á (2)" >> $env:GITHUB_ENV
+
+      - name: Primeira instalação privada
+        shell: powershell
+        run: .\bootstrap.ps1 --bootstrap-only
+
+      - name: Segunda inicialização reutiliza ambiente
+        shell: powershell
+        run: .\bootstrap.ps1 --bootstrap-only
+
+      - name: Simular ambiente Python quebrado
+        shell: powershell
+        run: |
+          $python = Get-ChildItem "$env:ESTRATEGIA_APP_HOME\environment" -Filter python.exe -Recurse | Select-Object -First 1
+          Rename-Item -LiteralPath $python.FullName -NewName "python.exe.broken"
+          .\bootstrap.ps1 --bootstrap-only
+
+      - name: Simular atualização de requisitos
+        shell: powershell
+        run: |
+          [IO.File]::AppendAllText(
+            (Resolve-Path .\requirements.lock.txt),
+            [Environment]::NewLine + "# atualizacao simulada"
+          )
+          .\bootstrap.ps1 --bootstrap-only
+
+      - name: Exibir log se houver falha
+        if: failure()
+        shell: powershell
+        run: Get-Content "$env:ESTRATEGIA_APP_HOME\logs\bootstrap.log" -Tail 200
