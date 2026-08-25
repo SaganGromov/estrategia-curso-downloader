@@ -88,13 +88,19 @@ Os materiais são baixados assim que aparecem; o programa não espera terminar a
 - atividade em tempo real;
 - espaço livre no destino.
 
+Listas dinâmicas são roladas e paginadas até permanecerem estáveis. Se o link
+de um vídeo não aparecer, a aula é reaberta e auditada em até três passagens.
+Um vídeo ou material anunciado pelo site sem link, assim como uma transferência
+que esgotou as tentativas, passa a ser uma falha real: a execução preserva tudo
+o que concluiu, mas não informa falsamente que o curso está completo.
+
 O botão **Cancelar download** pede confirmação, interrompe a transferência cooperativamente, fecha o Edge controlado e preserva arquivos completos e `.part` válidos.
 
 Ao concluir, o painel apresenta um resumo e os botões **Abrir pasta**, **Ver detalhes**, **Copiar diagnóstico** e **Encerrar interface**.
 
 ## Pastas de saída
 
-Cada execução normal cria uma pasta nova, sem reutilizar a pasta de outra execução:
+Uma execução nova cria uma pasta rastreável:
 
 ```text
 CURSO_ESTRATEGIA_<ID>_<UNIX_TIMESTAMP>
@@ -122,7 +128,17 @@ vídeos nem documentos PDF ficam em `outros_materiais`, criada somente quando
 necessária. Assim, os arquivos de uma aula não ficam misturados com os das
 demais.
 
-Essa convenção é intencional. Falhas transitórias durante a mesma execução retomam o `.part` com HTTP `Range` quando o servidor permite. Se o servidor ignorar a faixa, o arquivo é reiniciado com segurança; uma resposta inconsistente nunca é anexada cegamente.
+Cada pasta contém também `.estado_estrategia.json`. Se uma execução falhar,
+for cancelada ou for interrompida, informar novamente o mesmo curso reutiliza
+automaticamente a pasta incompleta mais recente. Arquivos completos são
+ignorados e os ausentes são procurados novamente. Pastas antigas sem marcador
+também são retomadas uma vez, o que permite completar downloads feitos por
+versões anteriores; depois de uma auditoria concluída sem falhas, uma nova
+execução volta a criar outra pasta timestampada.
+
+Falhas transitórias retomam o `.part` com HTTP `Range` quando o servidor
+permite. Se o servidor ignorar a faixa, o arquivo é reiniciado com segurança;
+uma resposta inconsistente nunca é anexada cegamente.
 
 ## Instalação automática e segurança
 
@@ -173,6 +189,13 @@ Confira a conexão e tente novamente. Proxy corporativo, firewall, AppLocker, an
 ### O curso não tem aulas ou materiais
 
 Confira o ID/URL, confirme que o login terminou e verifique se a conta realmente possui acesso ao curso.
+
+### A execução terminou com conteúdo pendente
+
+Abra **Ver detalhes** ou copie o diagnóstico para identificar os itens marcados
+com 🚩. Inicie novamente o mesmo curso e escolha a mesma pasta-base; o programa
+retomará a pasta incompleta, validará novamente as listas e tentará apenas o que
+ainda não estiver completo.
 
 ### Disco sem espaço
 
@@ -229,6 +252,9 @@ Os testes não usam credenciais reais e não acessam cursos reais. Eles cobrem:
 - bootstrap, metadados, launchers e caminhos Windows complexos;
 - API local, autenticação, modos, cancelamento e estados finais;
 - fixtures HTML sanitizados de aulas, vídeos e materiais;
+- estabilização de listas lazy-loaded, recuperação de vídeos após reabrir a aula
+  e bloqueio de falso sucesso quando resta qualquer pendência;
+- retomada automática de pastas incompletas e migração segura de pastas legadas;
 - nomes reservados e caracteres especiais do Windows;
 - URLs sensíveis e duplicatas;
 - transferências novas e retomadas HTTP válidas/inválidas;

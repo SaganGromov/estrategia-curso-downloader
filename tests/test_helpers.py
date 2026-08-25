@@ -170,6 +170,23 @@ class HelpersTest(unittest.TestCase):
                 ],
             )
 
+    def test_reutiliza_pasta_legada_do_curso_para_completar_pendencias(self):
+        with TemporaryDirectory() as diretorio:
+            pasta = Path(diretorio) / "CURSO_ESTRATEGIA_393267_1723680000"
+            pasta.mkdir()
+            (pasta / "links_estrategia_conteudo.txt").write_text(
+                "aula;tipo;numero;titulo;url\n", encoding="utf-8"
+            )
+            driver = DriverFake()
+
+            with patch("sys.stdout", new_callable=io.StringIO) as saida:
+                escolhida = app.criar_pasta_do_curso(
+                    Path(diretorio), driver, "393267"
+                )
+
+            self.assertEqual(escolhida, pasta)
+            self.assertIn("Retomando", saida.getvalue())
+
     def test_detecta_maior_resolucao_anunciada(self):
         botao = BotaoFake("Baixar 720p ou 1080p")
         self.assertEqual(app._resolucao_do_botao(botao), 1080)

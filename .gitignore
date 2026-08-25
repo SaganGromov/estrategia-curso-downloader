@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 venv/
 downloads/
+diag*.txt
+baixar_videos_ausentes_diag*.bat

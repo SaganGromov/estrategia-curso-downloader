@@ -31,6 +31,7 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn("Get-FileHash", bootstrap)
         self.assertIn("Get-EdgePath", bootstrap)
         self.assertIn("estrategia_downloader\\downloads.py", bootstrap)
+        self.assertIn("estrategia_downloader\\resume.py", bootstrap)
         self.assertIn("Alguns arquivos do aplicativo nao foram encontrados", bootstrap)
 
     def test_bootstrap_tem_reparo_e_estado_por_hash(self):

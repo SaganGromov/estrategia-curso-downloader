@@ -93,6 +93,34 @@ class CompletenessTest(unittest.TestCase):
         self.assertEqual(falhas, [])
         reabrir.assert_called_once()
 
+    def test_auditoria_final_inclui_video_revelado_durante_downloads(self):
+        primeiro = [ElementoFake("Vídeo 1")]
+        completo = primeiro + [ElementoFake("Vídeo 2")]
+
+        def selecionar(_driver, indice, _alertas):
+            return (
+                f"Vídeo {indice + 1}",
+                [(1080, f"https://cdn.test/video-{indice + 1}.mp4")],
+            )
+
+        with (
+            patch.object(
+                app,
+                "_carregar_videos_da_aula",
+                side_effect=[primeiro, completo, completo],
+            ),
+            patch.object(
+                app, "_reabrir_aula_para_recuperar_videos", return_value=completo
+            ),
+            patch.object(app, "_selecionar_video_e_obter_opcoes", selecionar),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            itens = list(
+                app.iterar_videos_da_aula_atual(DriverVideoFake(), 1, "Aula 1")
+            )
+
+        self.assertEqual([item["item_num"] for item in itens], [1, 2])
+
     def test_video_visivel_sem_link_vira_falha_real_uma_unica_vez(self):
         videos = [ElementoFake("Vídeo disponível"), ElementoFake("Vídeo pendente")]
 

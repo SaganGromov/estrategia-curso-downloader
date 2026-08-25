@@ -43,6 +43,7 @@ from .downloads import (
     GerenciadorDownloads as GerenciadorDownloadsNovo,
 )
 from .errors import ConteudoIncompletoError, mensagem_usuario_para_erro
+from .resume import localizar_pasta_retomavel, salvar_estado_execucao
 from .utils import (
     chave_deduplicacao_url,
     formatar_tamanho,
@@ -496,9 +497,21 @@ def montar_nome_pasta_curso(curso_id: str, unix_timestamp=None) -> str:
 def criar_pasta_do_curso(
     pasta_base: Path, driver, curso_id: str, unix_timestamp=None
 ) -> Path:
-    nome_pasta = montar_nome_pasta_curso(curso_id, unix_timestamp)
-    pasta_curso = pasta_base / nome_pasta
-    pasta_curso.mkdir(parents=True, exist_ok=True)
+    pasta_curso = (
+        localizar_pasta_retomavel(pasta_base, curso_id)
+        if unix_timestamp is None
+        else None
+    )
+    retomando = pasta_curso is not None
+    if pasta_curso is None:
+        nome_pasta = montar_nome_pasta_curso(curso_id, unix_timestamp)
+        pasta_curso = pasta_base / nome_pasta
+        pasta_curso.mkdir(parents=True, exist_ok=True)
+    else:
+        nome_pasta = pasta_curso.name
+
+    if not salvar_estado_execucao(pasta_curso, curso_id, "em_andamento"):
+        print("⚠️ Não foi possível gravar o marcador de retomada nesta pasta.")
 
     # Mantém também eventuais downloads iniciados pelo próprio Edge dentro da
     # mesma subpasta. Os downloads principais continuam sendo feitos via requests.
@@ -511,7 +524,10 @@ def criar_pasta_do_curso(
         pass
 
     print(f"📚 ID do curso: {curso_id}")
-    print(f"🗂️ Pasta desta execução: {nome_pasta}")
+    if retomando:
+        print(f"🔄 Retomando a execução incompleta: {nome_pasta}")
+    else:
+        print(f"🗂️ Pasta desta execução: {nome_pasta}")
     print(f"📁 Conteúdo será salvo em: {pasta_curso}")
     return pasta_curso
 
@@ -778,7 +794,6 @@ def iterar_videos_da_aula_atual(
     url_aula = driver.current_url
     pendentes = set(range(total))
     titulos = {}
-    nomes_usados_nesta_aula = {}
 
     for passagem in range(1, VIDEO_RECOVERY_PASSES + 1):
         if passagem > 1:
@@ -833,13 +848,6 @@ def iterar_videos_da_aula_atual(
                     continue
 
                 base_title = safe_filename(titulo_video)
-                if base_title in nomes_usados_nesta_aula:
-                    quantidade = nomes_usados_nesta_aula[base_title] + 1
-                    nomes_usados_nesta_aula[base_title] = quantidade
-                    base_title = f"{base_title} ({quantidade})"
-                else:
-                    nomes_usados_nesta_aula[base_title] = 1
-
                 print(
                     f"      ✅ Vídeo {idx + 1:02d}: {base_title} -> "
                     f"{sanitizar_url(href)}"
@@ -866,7 +874,19 @@ def iterar_videos_da_aula_atual(
                 )
 
         if not pendentes:
-            break
+            if passagem >= VIDEO_RECOVERY_PASSES:
+                break
+            auditoria = _carregar_videos_da_aula(driver, alertas)
+            if len(auditoria) <= total:
+                break
+            novos = set(range(total, len(auditoria)))
+            pendentes.update(novos)
+            total = len(auditoria)
+            videos = auditoria
+            print(
+                "   ➕ A auditoria final revelou mais vídeos; "
+                f"novo total: {total}"
+            )
 
     for idx in sorted(pendentes):
         titulo = safe_filename(titulos.get(idx, f"video_{idx + 1}"))
@@ -1115,6 +1135,9 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
     painel.atualizar(status="login", fase="Abrindo o Edge para autenticação")
     driver = None
     browser_info = None
+    download_dir = None
+    gerenciador = None
+    execucao_concluida = False
     try:
         driver = create_edge_driver(pasta_base)
         browser_info = diagnostico_browser(driver)
@@ -1238,14 +1261,26 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
         print(f"\n✅ Links registrados continuamente em: {out_txt}")
         gerenciador.resumo()
         garantir_curso_completo(gerenciador)
+        resumo = gerenciador.resumo_dados()
+        if not salvar_estado_execucao(
+            download_dir, curso_id, "concluido", resumo
+        ):
+            print("⚠️ Não foi possível atualizar o marcador final da execução.")
+        execucao_concluida = True
         print("\n✅ Processo completo.")
         return {
-            "resumo": gerenciador.resumo_dados(),
+            "resumo": resumo,
             "browser": browser_info,
         }
     finally:
         password = None
         configuracao["password"] = ""
+        if download_dir is not None and not execucao_concluida:
+            resumo = gerenciador.resumo_dados() if gerenciador is not None else {}
+            if not salvar_estado_execucao(
+                download_dir, curso_id, "incompleto", resumo
+            ):
+                print("⚠️ Não foi possível atualizar o marcador de retomada.")
         if driver is not None:
             try:
                 driver.quit()

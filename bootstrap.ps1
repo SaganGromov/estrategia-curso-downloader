@@ -31,6 +31,7 @@ $RequiredFiles = @(
     "estrategia_downloader\downloads.py",
     "estrategia_downloader\errors.py",
     "estrategia_downloader\models.py",
+    "estrategia_downloader\resume.py",
     "estrategia_downloader\utils.py",
     "interface\index.html",
     "interface\app.js",
