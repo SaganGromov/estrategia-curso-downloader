@@ -332,6 +332,66 @@ class CompletenessTest(unittest.TestCase):
         self.assertEqual(gerenciador.falhas_registradas, [])
         iterar_videos.assert_called_once()
 
+    def test_video_repetido_no_curso_reutiliza_id_ja_confirmado(self):
+        registro_video = {
+            "chave": "posicao=1|id=99",
+            "numero": 1,
+            "titulo": "Vídeo repetido",
+            "identificador": "99",
+        }
+        gerenciador = SimpleNamespace(
+            sessao=SimpleNamespace(headers={}),
+            urls_processadas=set(),
+            urls_concluidas=set(),
+            falhas_registradas=[],
+        )
+        gerenciador.registrar_falha_descoberta = (
+            gerenciador.falhas_registradas.append
+        )
+
+        with (
+            patch.object(
+                app,
+                "coletar_materiais_da_aula_atual",
+                return_value=([], set()),
+            ),
+            patch.object(
+                app,
+                "_inventario_videos_dom",
+                return_value=[registro_video],
+            ),
+            patch.object(
+                app,
+                "iterar_videos_da_aula_atual",
+                return_value=iter([]),
+            ) as iterar_videos,
+            patch.object(app, "_navegar_para_auditoria"),
+            patch.object(app, "INVENTORY_MAX_PASSES", 3),
+            patch.object(app, "INVENTORY_STABLE_OBSERVATIONS", 3),
+            patch.object(app, "INVENTORY_EMPTY_STABLE_OBSERVATIONS", 3),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            inventario = app.auditar_e_baixar_aula(
+                SimpleNamespace(),
+                None,
+                io.StringIO(),
+                gerenciador,
+                href="https://site.test/aulas/2",
+                aula_num=2,
+                aula_nome="Aula 02",
+                incluir_videos=True,
+                permitir_vazio=False,
+                ids_video_confirmados_curso={"99"},
+            )
+
+        self.assertTrue(inventario["estavel"])
+        self.assertEqual(len(inventario["videos"]), 1)
+        self.assertEqual(gerenciador.falhas_registradas, [])
+        iterar_videos.assert_called_once()
+        self.assertEqual(
+            iterar_videos.call_args.kwargs["ignorar_posicoes"], {1}
+        )
+
     def test_rota_geral_instavel_e_oportunistica_nao_cria_falha(self):
         gerenciador = SimpleNamespace(
             sessao=SimpleNamespace(headers={}),
