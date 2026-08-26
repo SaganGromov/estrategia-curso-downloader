@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from urllib.parse import unquote
 
 import requests
@@ -28,6 +29,14 @@ class CourseAccessError(CourseMetadataError):
 
 class CourseNotFoundError(CourseMetadataError):
     """O ID informado não corresponde a um curso acessível."""
+
+
+@dataclass(frozen=True, slots=True)
+class CourseSummary:
+    """Identidade canônica mínima de um curso da área do aluno."""
+
+    course_id: str
+    name: str
 
 
 def _validate_course_id(course_id: str) -> str:
@@ -158,6 +167,54 @@ def extract_course_name(payload, course_id: str) -> str:
     return name
 
 
+def _course_objects(value):
+    if isinstance(value, Mapping):
+        identifier = value.get("id")
+        name = value.get("nome")
+        if (
+            identifier is not None
+            and re.fullmatch(r"\d+", str(identifier))
+            and isinstance(name, str)
+            and name.strip()
+        ):
+            yield value
+        for child in value.values():
+            yield from _course_objects(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _course_objects(child)
+
+
+def extract_course_catalog(payload) -> list[CourseSummary]:
+    """Extrai e deduplica todos os pares ``id``/``nome`` do catálogo da conta."""
+
+    if not isinstance(payload, Mapping):
+        raise CourseMetadataError("o catálogo da API não é um objeto JSON")
+    if "data" not in payload:
+        raise CourseMetadataError("o catálogo da API não contém data")
+
+    courses = {}
+    for item in _course_objects(payload["data"]):
+        course_id = str(item["id"])
+        name = item["nome"]
+        previous = courses.get(course_id)
+        if previous is not None and previous != name:
+            raise CourseMetadataError(
+                f"o catálogo devolveu títulos conflitantes para o curso {course_id}"
+            )
+        courses[course_id] = name
+
+    if not courses:
+        raise CourseMetadataError("o catálogo da API não contém cursos acessíveis")
+    return sorted(
+        (
+            CourseSummary(course_id=course_id, name=name)
+            for course_id, name in courses.items()
+        ),
+        key=lambda course: (course.name.casefold(), course.course_id),
+    )
+
+
 def get_course_name(
     session: requests.Session,
     course_id: str,
@@ -191,4 +248,29 @@ def get_course_name(
     return extract_course_name(payload, course_id)
 
 
+def list_accessible_courses(
+    session: requests.Session,
+    *,
+    timeout=(HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT),
+) -> list[CourseSummary]:
+    """Lista os cursos devolvidos pelo catálogo autenticado da área do aluno."""
+
+    response = session.get(COURSE_LIST_ENDPOINT, timeout=timeout)
+    if response.status_code in {401, 403}:
+        raise CourseAccessError(
+            f"a API recusou o catálogo de cursos (HTTP {response.status_code})"
+        )
+    try:
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as error:
+        raise CourseMetadataError(
+            f"a API falhou ao consultar o catálogo (HTTP {response.status_code})"
+        ) from error
+    except ValueError as error:
+        raise CourseMetadataError("a API não devolveu um catálogo JSON válido") from error
+    return extract_course_catalog(payload)
+
+
 obter_nome_curso = get_course_name
+listar_cursos_acessiveis = list_accessible_courses

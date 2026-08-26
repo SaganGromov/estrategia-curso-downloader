@@ -6,13 +6,17 @@ import requests
 
 from estrategia_downloader.course_metadata import (
     COURSE_ENDPOINT,
+    COURSE_LIST_ENDPOINT,
     CourseAccessError,
     CourseMetadataError,
     CourseNotFoundError,
+    CourseSummary,
     authenticate_api_session,
     create_course_api_session,
+    extract_course_catalog,
     extract_course_name,
     get_course_name,
+    list_accessible_courses,
 )
 
 COURSE_ID = "327532"
@@ -44,6 +48,38 @@ class CourseMetadataTest(unittest.TestCase):
         with self.assertRaises(CourseMetadataError):
             extract_course_name(payload, COURSE_ID)
 
+    def test_extracts_and_deduplicates_the_accessible_course_catalog(self):
+        payload = {
+            "data": {
+                "matriculas": [
+                    {"id": 327532, "nome": EXPECTED_NAME},
+                    {"id": "396843", "nome": "(Mentoria) Projeto Banco Central"},
+                ],
+                "repetidos": [{"id": 327532, "nome": EXPECTED_NAME}],
+            }
+        }
+
+        self.assertEqual(
+            extract_course_catalog(payload),
+            [
+                CourseSummary("396843", "(Mentoria) Projeto Banco Central"),
+                CourseSummary("327532", EXPECTED_NAME),
+            ],
+        )
+
+    def test_rejects_empty_or_conflicting_course_catalogs(self):
+        with self.assertRaises(CourseMetadataError):
+            extract_course_catalog({"data": []})
+        with self.assertRaises(CourseMetadataError):
+            extract_course_catalog(
+                {
+                    "data": [
+                        {"id": 327532, "nome": "Primeiro título"},
+                        {"id": 327532, "nome": "Título conflitante"},
+                    ]
+                }
+            )
+
     def test_parameterizes_the_dashboard_course_id(self):
         session = Mock(spec=requests.Session)
         session.get.return_value = response(
@@ -55,6 +91,19 @@ class CourseMetadataTest(unittest.TestCase):
             session.get.call_args.args[0],
             COURSE_ENDPOINT.format(course_id="123456"),
         )
+        self.assertNotIn("headers", session.get.call_args.kwargs)
+
+    def test_requests_the_complete_authenticated_course_catalog(self):
+        session = Mock(spec=requests.Session)
+        session.get.return_value = response(
+            payload={"data": [{"id": 123456, "nome": "Curso diferente"}]}
+        )
+
+        self.assertEqual(
+            list_accessible_courses(session),
+            [CourseSummary("123456", "Curso diferente")],
+        )
+        self.assertEqual(session.get.call_args.args, (COURSE_LIST_ENDPOINT,))
         self.assertNotIn("headers", session.get.call_args.kwargs)
 
     def test_documents_unauthorized_and_missing_behaviour(self):
