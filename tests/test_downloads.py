@@ -219,6 +219,11 @@ class DownloadsResumeTest(unittest.TestCase):
             with patch("sys.stdout", new_callable=io.StringIO):
                 self.assertTrue(gerenciador.baixar(item()))
             self.assertEqual(gerenciador.existentes, 1)
+            self.assertEqual(
+                gerenciador.resumo_dados()["bytes_concluidos"],
+                len(CONTEUDO),
+            )
+            self.assertEqual(gerenciador.resumo_dados()["volume"], "10.0 B")
             self.assertEqual(gerenciador.sessao.requisicoes, [])
 
     def test_auditoria_valida_existente_pelo_tamanho_remoto(self):

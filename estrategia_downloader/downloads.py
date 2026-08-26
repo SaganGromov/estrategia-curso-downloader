@@ -649,13 +649,15 @@ class GerenciadorDownloads:
             else 0
         )
         velocidade_media = int(self.bytes_transferidos / max(decorrido, 0.001))
+        bytes_concluidos = self._bytes_prontos()
         return {
             "encontrados": self.encontrados,
             "baixados": self.baixados,
             "existentes": self.existentes,
             "falhas": self.falhas,
             "falhas_descoberta": len(self.falhas_descoberta),
-            "volume": formatar_tamanho(self.bytes_baixados),
+            "bytes_concluidos": bytes_concluidos,
+            "volume": formatar_tamanho(bytes_concluidos),
             "tempo": formatar_duracao(decorrido),
             "velocidade_media": (
                 f"{formatar_tamanho(velocidade_media)}/s" if decorrido else "0 B/s"

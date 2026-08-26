@@ -24,6 +24,12 @@ from interface_web import DownloadCancelado, InterfaceWeb, SaidaPainel
 
 from .alerts import RecuperadorAlertas
 from .browser import create_edge_driver, diagnostico_browser
+from .collection import (
+    ensure_course_folder,
+    open_collection,
+    save_collection,
+    update_course_status,
+)
 from .config import (
     DISCOVERY_MAX_ROUNDS,
     DISCOVERY_SCROLL_PAUSE,
@@ -37,20 +43,32 @@ from .config import (
     VIDEO_SELECTION_RETRIES,
     pasta_download_padrao,
 )
-from .course_metadata import create_course_api_session, get_course_name
+from .course_metadata import (
+    create_course_api_session,
+    get_course_name,
+    list_accessible_courses,
+)
 from .diagnostics import criar_diagnostico
 from .discovery import classificar_material as classificar_material_puro
 from .downloads import (
     GerenciadorDownloads as GerenciadorDownloadsNovo,
     criar_sessao_download,
 )
-from .errors import ConteudoIncompletoError, mensagem_usuario_para_erro
+from .errors import (
+    ColecaoIncompletaError,
+    ConteudoIncompletoError,
+    ProcessamentoCursoError,
+    mensagem_usuario_para_erro,
+)
 from .resume import localizar_pasta_retomavel, salvar_estado_execucao
 from .utils import (
+    EspacoInsuficienteError,
     chave_deduplicacao_url,
+    formatar_duracao,
     formatar_tamanho,
     normalizar_texto,
     safe_filename,
+    sanitizar_texto,
     sanitizar_url,
     slug_nome_curso,
     verificar_destino,
@@ -69,6 +87,7 @@ def configurar_saida_terminal():
 configurar_saida_terminal()
 
 DEFAULT_DOWNLOAD_DIR = pasta_download_padrao()
+DASHBOARD_COURSES_URL = "https://www.estrategiaconcursos.com.br/app/dashboard/cursos"
 VIDEO_TITLE_SELECTOR = (
     "span.VideoItem-info-title, [class*='VideoItem-info-title'], "
     "[class*='VideoItem'] [class*='title']"
@@ -538,6 +557,18 @@ def montar_nome_pasta_curso(
     return f"{slug}-id-{curso_id}-{int(unix_timestamp)}"
 
 
+def configurar_destino_edge(driver, pasta: Path) -> None:
+    """Direciona downloads ocasionais iniciados pelo Edge para a pasta atual."""
+
+    try:
+        driver.execute_cdp_cmd(
+            "Page.setDownloadBehavior",
+            {"behavior": "allow", "downloadPath": str(pasta)},
+        )
+    except WebDriverException:
+        pass
+
+
 def criar_pasta_do_curso(
     pasta_base: Path,
     driver,
@@ -567,13 +598,7 @@ def criar_pasta_do_curso(
 
     # Mantém também eventuais downloads iniciados pelo próprio Edge dentro da
     # mesma subpasta. Os downloads principais continuam sendo feitos via requests.
-    try:
-        driver.execute_cdp_cmd(
-            "Page.setDownloadBehavior",
-            {"behavior": "allow", "downloadPath": str(pasta_curso)},
-        )
-    except WebDriverException:
-        pass
+    configurar_destino_edge(driver, pasta_curso)
 
     print(f"📚 ID do curso: {curso_id}")
     print(f"📖 Curso: {nome_curso}")
@@ -1190,74 +1215,64 @@ def obter_nome_curso_autenticado(driver, curso_url: str, curso_id: str) -> str:
         sessao_web.close()
 
 
-def executar_download(args, configuracao, painel: InterfaceWeb):
-    email = configuracao["email"]
-    password = configuracao["password"]
-    curso_id = configuracao["curso_id"]
-    pasta_base = configuracao["pasta_base"]
-    curso_url = montar_curso_url(curso_id)
-    espaco_inicial = verificar_destino(pasta_base)
-    painel.atualizar(espaco_disponivel=formatar_tamanho(espaco_inicial))
-    painel.atualizar(status="login", fase="Abrindo o Edge para autenticação")
-    driver = None
-    browser_info = None
-    download_dir = None
-    gerenciador = None
-    execucao_concluida = False
-    try:
-        driver = create_edge_driver(pasta_base)
-        browser_info = diagnostico_browser(driver)
-        alertas = RecuperadorAlertas(
-            driver,
-            painel=painel,
-            verificar_cancelamento=painel.verificar_cancelamento,
-        )
-        painel.atualizar(
-            fase="Aguardando autenticação no Edge",
-            instrucao_login=(
-                "Uma janela de login foi aberta. Clique em Entrar e conclua "
-                "captcha ou verificação em duas etapas, se solicitado."
-            ),
-        )
-        do_login(
-            driver,
-            email,
-            password,
-            painel.verificar_cancelamento,
-            alertas,
-        )
-        password = None
-        configuracao["password"] = ""
+def obter_catalogo_cursos_autenticado(driver):
+    """Obtém o catálogo inteiro pela API e fecha imediatamente as sessões."""
 
-        painel.atualizar(
-            status="baixando",
-            fase="Login concluído. Identificando o curso",
-            instrucao_login="",
-        )
-        painel.verificar_cancelamento()
-        nome_curso = obter_nome_curso_autenticado(driver, curso_url, curso_id)
-        painel.atualizar(fase="Curso identificado. Localizando as aulas")
+    sessao_web = criar_sessao_download(driver, DASHBOARD_COURSES_URL)
+    sessao_api = None
+    try:
+        sessao_api = create_course_api_session(sessao_web)
+        return list_accessible_courses(sessao_api)
+    finally:
+        if sessao_api is not None:
+            sessao_api.close()
+        sessao_web.close()
+
+
+def executar_conteudo_curso(
+    driver,
+    alertas,
+    painel: InterfaceWeb,
+    curso_id: str,
+    nome_curso: str,
+    download_dir: Path,
+    *,
+    modo_reduzido: bool,
+    auditar_existentes: bool = False,
+) -> dict:
+    """Varre e baixa um curso; sempre persiste seu estado de retomada."""
+
+    curso_url = montar_curso_url(curso_id)
+    configurar_destino_edge(driver, download_dir)
+    painel.atualizar(
+        pasta_destino=str(download_dir),
+        curso_nome=nome_curso,
+        fase="Localizando as aulas e materiais do curso",
+    )
+    if not salvar_estado_execucao(download_dir, curso_id, "em_andamento"):
+        print("⚠️ Não foi possível gravar o marcador inicial deste curso.")
+
+    gerenciador = None
+    concluido = False
+    try:
         aulas = listar_aulas(driver, curso_url, alertas)
-        download_dir = criar_pasta_do_curso(
-            pasta_base,
-            driver,
-            curso_id,
-            nome_curso,
-        )
-        painel.atualizar(pasta_destino=str(download_dir))
         gerenciador = GerenciadorDownloads(
-            download_dir, driver, curso_url, painel=painel
+            download_dir,
+            driver,
+            curso_url,
+            painel=painel,
+            auditar_existentes=auditar_existentes,
         )
         gerenciador.configurar_total_aulas(len(aulas))
-        # A estrutura é previsível mesmo para aulas sem um determinado tipo de
-        # conteúdo. ``aula_00`` também abriga os materiais gerais do curso.
+        # ``aula_00`` também abriga os materiais gerais do curso.
         gerenciador.preparar_aula(0)
         for aula in aulas:
             gerenciador.preparar_aula(aula["num"])
         out_txt = download_dir / "links_estrategia_conteudo.txt"
 
-        modo_reduzido = configuracao["modo_reduzido"]
-        tipos_permitidos = tipos_permitidos_modo_reduzido() if modo_reduzido else None
+        tipos_permitidos = (
+            tipos_permitidos_modo_reduzido() if modo_reduzido else None
+        )
         if modo_reduzido:
             print(
                 "\n📄 Modo PDFs + slides ativado: PDFs, slides e mapas mentais "
@@ -1268,24 +1283,40 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
                 "\n⬇️ Modo completo: vídeos, PDFs, slides, mapas mentais e "
                 "demais materiais serão procurados e baixados."
             )
+        if auditar_existentes:
+            print("   🔎 Arquivos já presentes também terão o tamanho auditado.")
         print("   O download começará assim que cada arquivo for localizado.")
+
         with open(out_txt, "w", encoding="utf-8") as arquivo_links:
             arquivo_links.write("aula;tipo;numero;titulo;url\n")
             arquivo_links.flush()
 
-            # A página geral do curso às vezes contém apostilas ou materiais
-            # que não reaparecem dentro de nenhuma aula.
             painel.verificar_cancelamento()
             print("\n➡️ Procurando materiais gerais na página do curso...")
-            for item in iterar_materiais_da_aula_atual(
-                driver,
-                0,
-                "Materiais gerais do curso",
-                tipos_permitidos,
-                alertas,
-                gerenciador.registrar_falha_descoberta,
-            ):
-                registrar_e_baixar(item, arquivo_links, gerenciador)
+            fontes_gerais = [
+                iterar_materiais_da_aula_atual(
+                    driver,
+                    0,
+                    "Materiais gerais do curso",
+                    tipos_permitidos,
+                    alertas,
+                    gerenciador.registrar_falha_descoberta,
+                )
+            ]
+            if not modo_reduzido:
+                fontes_gerais.append(
+                    iterar_videos_da_aula_atual(
+                        driver,
+                        0,
+                        "Materiais gerais do curso",
+                        alertas,
+                        gerenciador.registrar_falha_descoberta,
+                    )
+                )
+            for fonte in fontes_gerais:
+                for item in fonte:
+                    painel.verificar_cancelamento()
+                    registrar_e_baixar(item, arquivo_links, gerenciador)
 
             for posicao, aula in enumerate(aulas, start=1):
                 painel.verificar_cancelamento()
@@ -1302,9 +1333,8 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
 
                 print(
                     f"\n➡️ Aula {posicao}/{len(aulas)}: {nome} "
-                    f"(número identificado: {num:02d})"
+                    f"(pasta identificada: aula_{num:02d})"
                 )
-
                 fontes = [
                     iterar_materiais_da_aula_atual(
                         driver,
@@ -1333,13 +1363,234 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
 
         print(f"\n✅ Links registrados continuamente em: {out_txt}")
         gerenciador.resumo()
-        garantir_curso_completo(gerenciador)
         resumo = gerenciador.resumo_dados()
-        if not salvar_estado_execucao(
-            download_dir, curso_id, "concluido", resumo
-        ):
-            print("⚠️ Não foi possível atualizar o marcador final da execução.")
-        execucao_concluida = True
+        garantir_curso_completo(gerenciador)
+        if not salvar_estado_execucao(download_dir, curso_id, "concluido", resumo):
+            print("⚠️ Não foi possível atualizar o marcador final deste curso.")
+        concluido = True
+        print(f"\n✅ Curso {curso_id} auditado sem pendências.")
+        return resumo
+    except DownloadCancelado:
+        raise
+    except Exception as erro:
+        resumo = gerenciador.resumo_dados() if gerenciador is not None else {}
+        raise ProcessamentoCursoError(curso_id, erro, resumo) from erro
+    finally:
+        if not concluido:
+            resumo = gerenciador.resumo_dados() if gerenciador is not None else {}
+            if not salvar_estado_execucao(
+                download_dir,
+                curso_id,
+                "incompleto",
+                resumo,
+            ):
+                print("⚠️ Não foi possível atualizar o marcador de retomada.")
+        if gerenciador is not None:
+            gerenciador.sessao.close()
+
+
+def _resumo_colecao(resumos: list[dict], falhas_cursos: int, inicio: float) -> dict:
+    encontrados = sum(int(item.get("encontrados", 0)) for item in resumos)
+    baixados = sum(int(item.get("baixados", 0)) for item in resumos)
+    existentes = sum(int(item.get("existentes", 0)) for item in resumos)
+    falhas_itens = sum(int(item.get("falhas", 0)) for item in resumos)
+    bytes_concluidos = sum(int(item.get("bytes_concluidos", 0)) for item in resumos)
+    return {
+        "encontrados": encontrados,
+        "baixados": baixados,
+        "existentes": existentes,
+        "falhas": falhas_itens + falhas_cursos,
+        "cursos_total": len(resumos),
+        "cursos_incompletos": falhas_cursos,
+        "bytes_concluidos": bytes_concluidos,
+        "volume": formatar_tamanho(bytes_concluidos),
+        "tempo": formatar_duracao(time.monotonic() - inicio),
+        "velocidade_media": "calculada individualmente por curso",
+    }
+
+
+def executar_colecao_integral(
+    driver,
+    alertas,
+    painel: InterfaceWeb,
+    pasta_base: Path,
+) -> dict:
+    """Audita sequencialmente todos os cursos retornados para a conta."""
+
+    painel.atualizar(fase="Consultando o catálogo completo da conta")
+    cursos = obter_catalogo_cursos_autenticado(driver)
+    raiz, estado, colecao_existente = open_collection(pasta_base)
+    painel.atualizar(
+        pasta_destino=str(raiz),
+        total_cursos=len(cursos),
+        curso_atual=0,
+    )
+    if colecao_existente:
+        print(f"\n🔄 Coleção anterior detectada: {raiz}")
+        print("   Todos os cursos serão reauditados; somente lacunas serão baixadas.")
+    else:
+        print(f"\n🗂️ Nova coleção integral criada: {raiz}")
+    print(f"📚 Cursos acessíveis encontrados no catálogo: {len(cursos)}")
+
+    inicio = time.monotonic()
+    resumos = []
+    falhas = []
+    for posicao, curso in enumerate(cursos, start=1):
+        painel.verificar_cancelamento()
+        painel.atualizar(
+            curso_atual=posicao,
+            curso_nome=curso.name,
+            fase=f"Preparando o curso {posicao} de {len(cursos)}",
+            encontrados=0,
+            baixados=0,
+            existentes=0,
+            falhas=0,
+            aula_atual=0,
+            total_aulas=0,
+        )
+        print("\n" + "=" * 72)
+        print(f"📚 Curso {posicao}/{len(cursos)} — {curso.course_id}: {curso.name}")
+        pasta_curso = ensure_course_folder(raiz, estado, curso)
+        update_course_status(estado, curso, pasta_curso, "em_andamento")
+        save_collection(raiz, estado)
+
+        try:
+            resumo = executar_conteudo_curso(
+                driver,
+                alertas,
+                painel,
+                curso.course_id,
+                curso.name,
+                pasta_curso,
+                modo_reduzido=False,
+                auditar_existentes=True,
+            )
+        except DownloadCancelado:
+            update_course_status(
+                estado,
+                curso,
+                pasta_curso,
+                "incompleto",
+                error="download cancelado pelo usuário",
+            )
+            save_collection(raiz, estado)
+            raise
+        except ProcessamentoCursoError as erro:
+            resumo = erro.resumo
+            resumos.append(resumo)
+            falhas.append(curso.course_id)
+            update_course_status(
+                estado,
+                curso,
+                pasta_curso,
+                "incompleto",
+                summary=resumo,
+                error=str(erro.causa),
+            )
+            save_collection(raiz, estado)
+            print(
+                f"\n🚩 Curso {curso.course_id} permanece incompleto: "
+                f"{sanitizar_texto(str(erro.causa))}"
+            )
+            if isinstance(erro.causa, (EspacoInsuficienteError, NoSuchWindowException)):
+                painel.definir_resumo(
+                    _resumo_colecao(resumos, len(falhas), inicio)
+                )
+                raise erro.causa
+            continue
+
+        resumos.append(resumo)
+        update_course_status(
+            estado,
+            curso,
+            pasta_curso,
+            "completo",
+            summary=resumo,
+        )
+        save_collection(raiz, estado)
+
+    resumo_final = _resumo_colecao(resumos, len(falhas), inicio)
+    painel.atualizar(
+        encontrados=resumo_final["encontrados"],
+        baixados=resumo_final["baixados"],
+        existentes=resumo_final["existentes"],
+        falhas=resumo_final["falhas"],
+    )
+    if falhas:
+        raise ColecaoIncompletaError(
+            "A coleção foi inteiramente percorrida, mas "
+            f"{len(falhas)} curso(s) ainda possuem pendências: "
+            + ", ".join(falhas),
+            resumo_final,
+        )
+    print("\n🎉 Todos os cursos do catálogo foram auditados sem pendências.")
+    return resumo_final
+
+
+def executar_download(args, configuracao, painel: InterfaceWeb):
+    email = configuracao["email"]
+    password = configuracao["password"]
+    curso_id = configuracao["curso_id"]
+    pasta_base = configuracao["pasta_base"]
+    espaco_inicial = verificar_destino(pasta_base)
+    painel.atualizar(espaco_disponivel=formatar_tamanho(espaco_inicial))
+    painel.atualizar(status="login", fase="Abrindo o Edge para autenticação")
+    driver = None
+    browser_info = None
+    try:
+        driver = create_edge_driver(pasta_base)
+        browser_info = diagnostico_browser(driver)
+        alertas = RecuperadorAlertas(
+            driver,
+            painel=painel,
+            verificar_cancelamento=painel.verificar_cancelamento,
+        )
+        painel.atualizar(
+            fase="Aguardando autenticação no Edge",
+            instrucao_login=(
+                "Uma janela de login foi aberta. Clique em Entrar e conclua "
+                "captcha ou verificação em duas etapas, se solicitado."
+            ),
+        )
+        do_login(
+            driver,
+            email,
+            password,
+            painel.verificar_cancelamento,
+            alertas,
+        )
+        password = None
+        configuracao["password"] = ""
+
+        painel.atualizar(status="baixando", instrucao_login="")
+        painel.verificar_cancelamento()
+        if configuracao["modo_integral"]:
+            resumo = executar_colecao_integral(
+                driver,
+                alertas,
+                painel,
+                pasta_base,
+            )
+            return {"resumo": resumo, "browser": browser_info}
+
+        curso_url = montar_curso_url(curso_id)
+        painel.atualizar(fase="Login concluído. Identificando o curso")
+        nome_curso = obter_nome_curso_autenticado(driver, curso_url, curso_id)
+        download_dir = criar_pasta_do_curso(
+            pasta_base,
+            driver,
+            curso_id,
+            nome_curso,
+        )
+        resumo = executar_conteudo_curso(
+            driver,
+            alertas,
+            painel,
+            curso_id,
+            nome_curso,
+            download_dir,
+            modo_reduzido=configuracao["modo_reduzido"],
+        )
         print("\n✅ Processo completo.")
         return {
             "resumo": resumo,
@@ -1348,12 +1599,6 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
     finally:
         password = None
         configuracao["password"] = ""
-        if download_dir is not None and not execucao_concluida:
-            resumo = gerenciador.resumo_dados() if gerenciador is not None else {}
-            if not salvar_estado_execucao(
-                download_dir, curso_id, "incompleto", resumo
-            ):
-                print("⚠️ Não foi possível atualizar o marcador de retomada.")
         if driver is not None:
             try:
                 driver.quit()
@@ -1407,6 +1652,9 @@ def main():
         codigo_saida = 1
         mensagem = mensagem_usuario_para_erro(e)
         print(f"\n❌ Não foi possível concluir: {mensagem}")
+        resumo_erro = getattr(e, "resumo", None)
+        if isinstance(resumo_erro, dict) and resumo_erro:
+            painel.definir_resumo(resumo_erro)
         if os.getenv("ESTRATEGIA_DEBUG") == "1":
             traceback.print_exc()
         painel.definir_diagnostico(

@@ -14,7 +14,27 @@ class ConteudoIncompletoError(RuntimeError):
     """A página anunciou conteúdo que não pôde ser localizado ou baixado."""
 
 
+class ProcessamentoCursoError(RuntimeError):
+    """Um curso falhou depois que seu resumo parcial pôde ser preservado."""
+
+    def __init__(self, curso_id: str, causa: Exception, resumo: dict):
+        self.curso_id = str(curso_id)
+        self.causa = causa
+        self.resumo = resumo
+        super().__init__(str(causa))
+
+
+class ColecaoIncompletaError(ConteudoIncompletoError):
+    """Todos os cursos foram tentados, mas a coleção ainda tem pendências."""
+
+    def __init__(self, mensagem: str, resumo: dict):
+        self.resumo = resumo
+        super().__init__(mensagem)
+
+
 def mensagem_usuario_para_erro(erro: Exception) -> str:
+    if isinstance(erro, ProcessamentoCursoError):
+        return mensagem_usuario_para_erro(erro.causa)
     if isinstance(
         erro,
         (
