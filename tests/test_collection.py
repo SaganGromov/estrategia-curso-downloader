@@ -34,6 +34,15 @@ class CollectionTest(unittest.TestCase):
             self.assertTrue(existed)
             self.assertEqual(detected_root, root)
 
+    def test_accepts_a_uniquely_named_spillover_collection(self):
+        with TemporaryDirectory() as directory:
+            selected = Path(directory) / "estrategia-cursos-completos-e"
+            root, _state, existed = open_collection(selected)
+
+            self.assertFalse(existed)
+            self.assertEqual(root, selected)
+            self.assertTrue((root / COLLECTION_MARKER).is_file())
+
     def test_course_folder_has_title_and_id_but_no_run_timestamp(self):
         course = CourseSummary("327532", "BACEN Área 2 — Macroeconomia")
         self.assertEqual(

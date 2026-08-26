@@ -141,6 +141,46 @@ class BulkDownloadTest(unittest.TestCase):
             self.assertEqual(state["cursos"]["200"]["status"], "completo")
             self.assertEqual(caught.exception.resumo["cursos_incompletos"], 1)
 
+    def test_filter_and_spillover_only_process_the_selected_course(self):
+        courses = [
+            CourseSummary("100", "BACEN - Curso"),
+            CourseSummary("200", "TCDF - Curso"),
+        ]
+        panel = PanelFake()
+        with TemporaryDirectory() as directory, \
+            patch.object(
+                app,
+                "obter_catalogo_cursos_autenticado",
+                return_value=courses,
+            ), \
+            patch.object(
+                app,
+                "executar_conteudo_curso",
+                return_value=summary(),
+            ) as process, \
+            patch.object(
+                app,
+                "verificar_destino",
+                side_effect=lambda path: 1000 if str(path).endswith("-e") else 10,
+            ), \
+            patch("sys.stdout"):
+            base = Path(directory)
+            extra = base / "estrategia-cursos-completos-e"
+            result = app.executar_colecao_integral(
+                DriverFake(),
+                Mock(),
+                panel,
+                base / "principal",
+                pastas_extras=(extra,),
+                selecionar_curso=lambda course: course.name.startswith("BACEN"),
+            )
+
+            state = json.loads((extra / COLLECTION_MARKER).read_text("utf-8"))
+            self.assertEqual(process.call_count, 1)
+            self.assertEqual(process.call_args.args[3], "100")
+            self.assertEqual(result["cursos_total"], 1)
+            self.assertEqual(set(state["cursos"]), {"100"})
+
     def test_course_state_is_incomplete_when_discovery_fails_before_downloads(self):
         panel = PanelFake()
         with TemporaryDirectory() as directory, \

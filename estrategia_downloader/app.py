@@ -26,6 +26,7 @@ from interface_web import DownloadCancelado, InterfaceWeb, SaidaPainel
 from .alerts import RecuperadorAlertas
 from .browser import create_edge_driver, diagnostico_browser
 from .collection import (
+    CollectionError,
     ensure_course_folder,
     open_collection,
     save_collection,
@@ -1441,12 +1442,35 @@ def executar_colecao_integral(
     alertas,
     painel: InterfaceWeb,
     pasta_base: Path,
+    *,
+    pastas_extras: tuple[Path, ...] = (),
+    selecionar_curso=None,
 ) -> dict:
     """Audita sequencialmente todos os cursos retornados para a conta."""
 
     painel.atualizar(fase="Consultando o catálogo completo da conta")
-    cursos = obter_catalogo_cursos_autenticado(driver)
-    raiz, estado, colecao_existente = open_collection(pasta_base)
+    catalogo = obter_catalogo_cursos_autenticado(driver)
+    cursos = (
+        [curso for curso in catalogo if selecionar_curso(curso)]
+        if selecionar_curso is not None
+        else catalogo
+    )
+    if not cursos:
+        raise CollectionError("o filtro informado não selecionou nenhum curso")
+    colecoes = []
+    for selecionada in (pasta_base, *pastas_extras):
+        raiz, estado, existente = open_collection(selecionada)
+        if any(item["raiz"] == raiz for item in colecoes):
+            raise CollectionError(f"a coleção foi informada mais de uma vez: {raiz}")
+        colecoes.append(
+            {
+                "raiz": raiz,
+                "estado": estado,
+                "existente": existente,
+            }
+        )
+    raiz = colecoes[0]["raiz"]
+    colecao_existente = any(item["existente"] for item in colecoes)
     painel.atualizar(
         pasta_destino=str(raiz),
         total_cursos=len(cursos),
@@ -1457,7 +1481,13 @@ def executar_colecao_integral(
         print("   Todos os cursos serão reauditados; somente lacunas serão baixadas.")
     else:
         print(f"\n🗂️ Nova coleção integral criada: {raiz}")
-    print(f"📚 Cursos acessíveis encontrados no catálogo: {len(cursos)}")
+    if len(colecoes) > 1:
+        print(f"💽 Volumes disponíveis para a coleção: {len(colecoes)}")
+        for item in colecoes:
+            print(f"   • {item['raiz']}")
+    print(f"📚 Cursos acessíveis encontrados no catálogo: {len(catalogo)}")
+    if len(cursos) != len(catalogo):
+        print(f"🎯 Cursos selecionados para esta execução: {len(cursos)}")
 
     inicio = time.monotonic()
     resumos = []
@@ -1477,9 +1507,29 @@ def executar_colecao_integral(
         )
         print("\n" + "=" * 72)
         print(f"📚 Curso {posicao}/{len(cursos)} — {curso.course_id}: {curso.name}")
-        pasta_curso = ensure_course_folder(raiz, estado, curso)
+        candidatas = [
+            item
+            for item in colecoes
+            if curso.course_id in item["estado"].get("cursos", {})
+        ]
+        if len(candidatas) > 1:
+            raise CollectionError(
+                f"o curso {curso.course_id} está registrado em mais de um volume"
+            )
+        if candidatas:
+            colecao = candidatas[0]
+        else:
+            colecao = max(
+                colecoes,
+                key=lambda item: verificar_destino(item["raiz"]),
+            )
+        raiz_curso = colecao["raiz"]
+        estado = colecao["estado"]
+        pasta_curso = ensure_course_folder(raiz_curso, estado, curso)
+        painel.atualizar(pasta_destino=str(pasta_curso))
+        print(f"💽 Volume escolhido para o curso: {raiz_curso}")
         update_course_status(estado, curso, pasta_curso, "em_andamento")
-        save_collection(raiz, estado)
+        save_collection(raiz_curso, estado)
 
         try:
             resumo = executar_conteudo_curso(
@@ -1500,7 +1550,7 @@ def executar_colecao_integral(
                 "incompleto",
                 error="download cancelado pelo usuário",
             )
-            save_collection(raiz, estado)
+            save_collection(raiz_curso, estado)
             raise
         except ProcessamentoCursoError as erro:
             resumo = erro.resumo
@@ -1514,7 +1564,7 @@ def executar_colecao_integral(
                 summary=resumo,
                 error=str(erro.causa),
             )
-            save_collection(raiz, estado)
+            save_collection(raiz_curso, estado)
             print(
                 f"\n🚩 Curso {curso.course_id} permanece incompleto: "
                 f"{sanitizar_texto(str(erro.causa))}"
@@ -1534,7 +1584,7 @@ def executar_colecao_integral(
             "completo",
             summary=resumo,
         )
-        save_collection(raiz, estado)
+        save_collection(raiz_curso, estado)
 
     resumo_final = _resumo_colecao(resumos, len(falhas), inicio)
     painel.atualizar(

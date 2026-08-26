@@ -38,7 +38,9 @@ def resolve_collection_root(selected_folder: Path) -> Path:
     selected = Path(selected_folder).expanduser().resolve()
     if (selected / COLLECTION_MARKER).is_file():
         return selected
-    if selected.name == COLLECTION_DIRECTORY_NAME:
+    if selected.name == COLLECTION_DIRECTORY_NAME or selected.name.startswith(
+        f"{COLLECTION_DIRECTORY_NAME}-"
+    ):
         return selected
     return selected / COLLECTION_DIRECTORY_NAME
 
