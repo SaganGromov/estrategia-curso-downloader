@@ -25,6 +25,7 @@ $RequiredFiles = @(
     "estrategia_downloader\app.py",
     "estrategia_downloader\alerts.py",
     "estrategia_downloader\browser.py",
+    "estrategia_downloader\collection.py",
     "estrategia_downloader\config.py",
     "estrategia_downloader\course_metadata.py",
     "estrategia_downloader\diagnostics.py",
