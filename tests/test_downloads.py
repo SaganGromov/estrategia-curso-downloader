@@ -50,13 +50,19 @@ class RespostaFake:
 
 
 class SessaoFake:
-    def __init__(self, respostas):
+    def __init__(self, respostas, cabecas=None):
         self.respostas = list(respostas)
+        self.cabecas = list(cabecas or [])
         self.requisicoes = []
+        self.requisicoes_head = []
 
     def get(self, url, **kwargs):
         self.requisicoes.append((url, kwargs))
         return self.respostas.pop(0)
+
+    def head(self, url, **kwargs):
+        self.requisicoes_head.append((url, kwargs))
+        return self.cabecas.pop(0)
 
 
 class PainelFake:
@@ -104,11 +110,25 @@ def caminho_pdf(pasta, *, parcial=False):
 
 
 class DownloadsResumeTest(unittest.TestCase):
-    def criar(self, pasta, respostas, *, painel=None, tentativas=1):
+    def criar(
+        self,
+        pasta,
+        respostas,
+        *,
+        painel=None,
+        tentativas=1,
+        auditar_existentes=False,
+        cabecas=None,
+    ):
         gerenciador = GerenciadorDownloads(
-            Path(pasta), DriverFake(), "https://curso.example", tentativas, painel
+            Path(pasta),
+            DriverFake(),
+            "https://curso.example",
+            tentativas,
+            painel,
+            auditar_existentes,
         )
-        gerenciador.sessao = SessaoFake(respostas)
+        gerenciador.sessao = SessaoFake(respostas, cabecas)
         return gerenciador
 
     def test_transferencia_nova(self):
@@ -200,6 +220,129 @@ class DownloadsResumeTest(unittest.TestCase):
                 self.assertTrue(gerenciador.baixar(item()))
             self.assertEqual(gerenciador.existentes, 1)
             self.assertEqual(gerenciador.sessao.requisicoes, [])
+
+    def test_auditoria_valida_existente_pelo_tamanho_remoto(self):
+        with TemporaryDirectory() as pasta:
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
+            destino.write_bytes(CONTEUDO)
+            cabeca = RespostaFake(b"", headers={"Content-Length": "10"})
+            gerenciador = self.criar(
+                pasta,
+                [],
+                auditar_existentes=True,
+                cabecas=[cabeca],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item()))
+
+            self.assertEqual(gerenciador.existentes, 1)
+            self.assertEqual(gerenciador.sessao.requisicoes, [])
+            self.assertEqual(len(gerenciador.sessao.requisicoes_head), 1)
+
+    def test_auditoria_retoma_arquivo_existente_truncado(self):
+        with TemporaryDirectory() as pasta:
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
+            destino.write_bytes(CONTEUDO[:4])
+            cabeca = RespostaFake(b"", headers={"Content-Length": "10"})
+            resposta = RespostaFake(
+                CONTEUDO[4:],
+                status=206,
+                headers={
+                    "Content-Type": "application/pdf",
+                    "Content-Length": "6",
+                    "Content-Range": "bytes 4-9/10",
+                },
+            )
+            gerenciador = self.criar(
+                pasta,
+                [resposta],
+                auditar_existentes=True,
+                cabecas=[cabeca],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item()))
+
+            self.assertEqual(destino.read_bytes(), CONTEUDO)
+            self.assertEqual(
+                gerenciador.sessao.requisicoes[0][1]["headers"]["Range"],
+                "bytes=4-",
+            )
+            self.assertEqual(gerenciador.baixados, 1)
+
+    def test_auditoria_confirma_existente_com_range_quando_head_falha(self):
+        with TemporaryDirectory() as pasta:
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
+            destino.write_bytes(CONTEUDO)
+            cabeca = RespostaFake(b"", status=405)
+            resposta = RespostaFake(
+                b"",
+                status=416,
+                headers={
+                    "Content-Type": "application/pdf",
+                    "Content-Range": "bytes */10",
+                },
+            )
+            gerenciador = self.criar(
+                pasta,
+                [resposta],
+                auditar_existentes=True,
+                cabecas=[cabeca],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item()))
+
+            self.assertEqual(destino.read_bytes(), CONTEUDO)
+            self.assertEqual(gerenciador.existentes, 1)
+            self.assertEqual(gerenciador.baixados, 0)
+
+    def test_auditoria_substitui_sobretamanho_e_remove_backup_apos_sucesso(self):
+        with TemporaryDirectory() as pasta:
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
+            destino.write_bytes(CONTEUDO + b"lixo")
+            cabeca = RespostaFake(b"", headers={"Content-Length": "10"})
+            gerenciador = self.criar(
+                pasta,
+                [RespostaFake(CONTEUDO)],
+                auditar_existentes=True,
+                cabecas=[cabeca],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item()))
+
+            self.assertEqual(destino.read_bytes(), CONTEUDO)
+            self.assertEqual(
+                list(destino.parent.glob("*.pre-auditoria-*")),
+                [],
+            )
+
+    def test_auditoria_preserva_backup_se_a_substituicao_falha(self):
+        with TemporaryDirectory() as pasta:
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
+            conteudo_antigo = CONTEUDO + b"lixo"
+            destino.write_bytes(conteudo_antigo)
+            cabeca = RespostaFake(b"", headers={"Content-Length": "10"})
+            gerenciador = self.criar(
+                pasta,
+                [RespostaFake(CONTEUDO, interromper=True)],
+                auditar_existentes=True,
+                cabecas=[cabeca],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertFalse(gerenciador.baixar(item()))
+
+            backups = list(destino.parent.glob("*.pre-auditoria-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), conteudo_antigo)
 
     def test_cancelamento_em_retomada_preserva_bytes_recebidos(self):
         with TemporaryDirectory() as pasta:

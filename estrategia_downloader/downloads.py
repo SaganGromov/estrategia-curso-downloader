@@ -139,6 +139,7 @@ class GerenciadorDownloads:
         curso_url: str,
         max_tentativas: int = MAX_DOWNLOAD_RETRIES,
         painel=None,
+        auditar_existentes: bool = False,
     ):
         self.download_dir = download_dir
         self.sessao = criar_sessao_download(driver, curso_url)
@@ -164,6 +165,7 @@ class GerenciadorDownloads:
         self._progresso_ativo = False
         self._item_atual = "Aguardando o primeiro arquivo"
         self.painel = painel
+        self.auditar_existentes = auditar_existentes
 
     def _verificar_cancelamento(self):
         if self.painel is not None:
@@ -375,6 +377,78 @@ class GerenciadorDownloads:
         except ValueError:
             return caminho.name
 
+    def _tamanho_remoto(self, url: str) -> int | None:
+        try:
+            with self.sessao.head(
+                url,
+                allow_redirects=True,
+                timeout=(HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT),
+            ) as resposta:
+                if not 200 <= getattr(resposta, "status_code", 0) < 300:
+                    return None
+                tamanho = int(resposta.headers.get("Content-Length") or 0)
+                return tamanho if tamanho > 0 else None
+        except (OSError, TypeError, ValueError, requests.RequestException):
+            return None
+
+    @staticmethod
+    def _caminho_backup(caminho: Path) -> Path:
+        indice = 1
+        while True:
+            candidato = caminho.with_name(
+                f"{caminho.name}.pre-auditoria-{indice}"
+            )
+            if not candidato.exists():
+                return candidato
+            indice += 1
+
+    def _preparar_arquivo_existente(
+        self,
+        destino: Path,
+        temporario: Path,
+        url: str,
+    ) -> tuple[bool, int, list[Path]]:
+        """Valida o arquivo ou o transforma em parcial sem descartar bytes."""
+
+        if not destino.is_file() or destino.stat().st_size <= 0:
+            return False, 0, []
+        tamanho_local = destino.stat().st_size
+        if not self.auditar_existentes:
+            return True, tamanho_local, []
+
+        tamanho_remoto = self._tamanho_remoto(url)
+        if tamanho_remoto == tamanho_local:
+            print(
+                "      🔎 Arquivo existente validado pelo tamanho remoto: "
+                f"{self._nome_relativo(destino)}"
+            )
+            return True, tamanho_local, []
+
+        remoto = formatar_tamanho(tamanho_remoto) if tamanho_remoto else "incerto"
+        print(
+            "      🔎 Auditando arquivo existente via retomada segura: "
+            f"local={formatar_tamanho(tamanho_local)}, remoto={remoto}."
+        )
+        backups = []
+        if tamanho_remoto is not None and tamanho_local > tamanho_remoto:
+            backup = self._caminho_backup(destino)
+            destino.replace(backup)
+            backups.append(backup)
+            return False, 0, backups
+
+        if temporario.exists():
+            if temporario.stat().st_size >= tamanho_local:
+                backup = self._caminho_backup(destino)
+                destino.replace(backup)
+            else:
+                backup = self._caminho_backup(temporario)
+                temporario.replace(backup)
+                destino.replace(temporario)
+            backups.append(backup)
+        else:
+            destino.replace(temporario)
+        return False, 0, backups
+
     def _preparar_resposta(self, resposta, parcial: int):
         """Retorna (modo, total, offset), sem jamais anexar um 200 completo."""
         status = getattr(resposta, "status_code", 200)
@@ -424,9 +498,12 @@ class GerenciadorDownloads:
         self._sincronizar_contadores()
         temporario = destino.with_suffix(destino.suffix + ".part")
         metadados_path = temporario.with_suffix(temporario.suffix + ".json")
-
-        if destino.exists() and destino.stat().st_size > 0:
-            tamanho = destino.stat().st_size
+        completo, tamanho, backups_auditoria = self._preparar_arquivo_existente(
+            destino,
+            temporario,
+            url,
+        )
+        if completo:
             self.existentes += 1
             self.bytes_existentes += tamanho
             self._sincronizar_contadores()
@@ -453,6 +530,7 @@ class GerenciadorDownloads:
                 flush=True,
             )
             transferido = 0
+            validado_sem_transferencia = False
             try:
                 inicio_item = time.monotonic()
                 if self.inicio_downloads is None:
@@ -472,6 +550,7 @@ class GerenciadorDownloads:
                         metadados_path.unlink(missing_ok=True)
                         recebido_total = total
                         transferido = 0
+                        validado_sem_transferencia = True
                     else:
                         extensao = detectar_extensao_resposta(
                             resposta, url, destino.suffix
@@ -518,12 +597,18 @@ class GerenciadorDownloads:
                         temporario.replace(destino)
                         metadados_path.unlink(missing_ok=True)
 
-                self.baixados += 1
-                self.bytes_baixados += destino.stat().st_size
+                tamanho_final = destino.stat().st_size
+                if validado_sem_transferencia:
+                    self.existentes += 1
+                    self.bytes_existentes += tamanho_final
+                else:
+                    self.baixados += 1
+                    self.bytes_baixados += tamanho_final
                 self.bytes_transferidos += transferido
+                for backup in backups_auditoria:
+                    backup.unlink(missing_ok=True)
                 self._sincronizar_contadores()
                 if self.painel is not None:
-                    tamanho_final = destino.stat().st_size
                     self.painel.atualizar(
                         item={
                             "nome": self._item_atual,
@@ -535,10 +620,8 @@ class GerenciadorDownloads:
                             "eta": "00:00",
                         }
                     )
-                print(
-                    "      ✅ Salvo "
-                    f"({formatar_tamanho(destino.stat().st_size)}): {destino}"
-                )
+                acao = "Validado" if validado_sem_transferencia else "Salvo"
+                print(f"      ✅ {acao} ({formatar_tamanho(tamanho_final)}): {destino}")
                 return True
             except EspacoInsuficienteError:
                 self._encerrar_linha_progresso()
