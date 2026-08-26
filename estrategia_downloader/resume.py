@@ -32,7 +32,11 @@ def _parece_execucao_legada(pasta: Path) -> bool:
 
 def localizar_pasta_retomavel(pasta_base: Path, curso_id: str) -> Path | None:
     """Localiza a execução incompleta mais recente do mesmo curso."""
-    padrao = re.compile(rf"^CURSO_ESTRATEGIA_{re.escape(curso_id)}_(\d+)$")
+    curso_id_escapado = re.escape(str(curso_id))
+    padrao_legado = re.compile(rf"^CURSO_ESTRATEGIA_{curso_id_escapado}_(\d+)$")
+    padrao_descritivo = re.compile(
+        rf"^[a-z0-9]+(?:-[a-z0-9]+)*-id-{curso_id_escapado}-(\d+)$"
+    )
     candidatas = []
     try:
         itens = list(pasta_base.iterdir())
@@ -40,7 +44,11 @@ def localizar_pasta_retomavel(pasta_base: Path, curso_id: str) -> Path | None:
         return None
 
     for pasta in itens:
-        correspondencia = padrao.fullmatch(pasta.name)
+        correspondencia = padrao_descritivo.fullmatch(pasta.name)
+        pasta_legada = False
+        if correspondencia is None:
+            correspondencia = padrao_legado.fullmatch(pasta.name)
+            pasta_legada = correspondencia is not None
         if not correspondencia or not pasta.is_dir():
             continue
         estado = _ler_estado(pasta)
@@ -49,7 +57,7 @@ def localizar_pasta_retomavel(pasta_base: Path, curso_id: str) -> Path | None:
                 continue
             if estado.get("status") not in STATUS_RETOMAVEIS:
                 continue
-        elif not _parece_execucao_legada(pasta):
+        elif not pasta_legada or not _parece_execucao_legada(pasta):
             continue
         candidatas.append((int(correspondencia.group(1)), pasta))
 

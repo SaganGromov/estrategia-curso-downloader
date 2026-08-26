@@ -37,10 +37,12 @@ from .config import (
     VIDEO_SELECTION_RETRIES,
     pasta_download_padrao,
 )
+from .course_metadata import create_course_api_session, get_course_name
 from .diagnostics import criar_diagnostico
 from .discovery import classificar_material as classificar_material_puro
 from .downloads import (
     GerenciadorDownloads as GerenciadorDownloadsNovo,
+    criar_sessao_download,
 )
 from .errors import ConteudoIncompletoError, mensagem_usuario_para_erro
 from .resume import localizar_pasta_retomavel, salvar_estado_execucao
@@ -50,6 +52,7 @@ from .utils import (
     normalizar_texto,
     safe_filename,
     sanitizar_url,
+    slug_nome_curso,
     verificar_destino,
 )
 
@@ -487,15 +490,24 @@ def aguardar_conteudo_aula(driver, alertas=None, timeout=SELENIUM_WAIT_TIMEOUT):
     )
 
 
-def montar_nome_pasta_curso(curso_id: str, unix_timestamp=None) -> str:
-    """Monta um nome estável, rastreável e independente do HTML da página."""
+def montar_nome_pasta_curso(
+    curso_id: str,
+    nome_curso: str,
+    unix_timestamp=None,
+) -> str:
+    """Monta um nome descritivo, portável e rastreável para a execução."""
     if unix_timestamp is None:
         unix_timestamp = int(time.time())
-    return f"CURSO_ESTRATEGIA_{curso_id}_{int(unix_timestamp)}"
+    slug = slug_nome_curso(nome_curso)
+    return f"{slug}-id-{curso_id}-{int(unix_timestamp)}"
 
 
 def criar_pasta_do_curso(
-    pasta_base: Path, driver, curso_id: str, unix_timestamp=None
+    pasta_base: Path,
+    driver,
+    curso_id: str,
+    nome_curso: str,
+    unix_timestamp=None,
 ) -> Path:
     pasta_curso = (
         localizar_pasta_retomavel(pasta_base, curso_id)
@@ -504,7 +516,11 @@ def criar_pasta_do_curso(
     )
     retomando = pasta_curso is not None
     if pasta_curso is None:
-        nome_pasta = montar_nome_pasta_curso(curso_id, unix_timestamp)
+        nome_pasta = montar_nome_pasta_curso(
+            curso_id,
+            nome_curso,
+            unix_timestamp,
+        )
         pasta_curso = pasta_base / nome_pasta
         pasta_curso.mkdir(parents=True, exist_ok=True)
     else:
@@ -524,6 +540,7 @@ def criar_pasta_do_curso(
         pass
 
     print(f"📚 ID do curso: {curso_id}")
+    print(f"📖 Curso: {nome_curso}")
     if retomando:
         print(f"🔄 Retomando a execução incompleta: {nome_pasta}")
     else:
@@ -1124,6 +1141,19 @@ def garantir_curso_completo(gerenciador: GerenciadorDownloads):
     )
 
 
+def obter_nome_curso_autenticado(driver, curso_url: str, curso_id: str) -> str:
+    """Consulta o título pela API usando apenas a autenticação copiada do Edge."""
+    sessao_web = criar_sessao_download(driver, curso_url)
+    sessao_api = None
+    try:
+        sessao_api = create_course_api_session(sessao_web)
+        return get_course_name(sessao_api, curso_id)
+    finally:
+        if sessao_api is not None:
+            sessao_api.close()
+        sessao_web.close()
+
+
 def executar_download(args, configuracao, painel: InterfaceWeb):
     email = configuracao["email"]
     password = configuracao["password"]
@@ -1165,12 +1195,19 @@ def executar_download(args, configuracao, painel: InterfaceWeb):
 
         painel.atualizar(
             status="baixando",
-            fase="Login concluído. Localizando as aulas do curso",
+            fase="Login concluído. Identificando o curso",
             instrucao_login="",
         )
         painel.verificar_cancelamento()
+        nome_curso = obter_nome_curso_autenticado(driver, curso_url, curso_id)
+        painel.atualizar(fase="Curso identificado. Localizando as aulas")
         aulas = listar_aulas(driver, curso_url, alertas)
-        download_dir = criar_pasta_do_curso(pasta_base, driver, curso_id)
+        download_dir = criar_pasta_do_curso(
+            pasta_base,
+            driver,
+            curso_id,
+            nome_curso,
+        )
         painel.atualizar(pasta_destino=str(download_dir))
         gerenciador = GerenciadorDownloads(
             download_dir, driver, curso_url, painel=painel

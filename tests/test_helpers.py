@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import estrategia_download_edge_any as app
 from interface_web import InterfaceWeb, extrair_id_interface
@@ -143,23 +143,35 @@ class HelpersTest(unittest.TestCase):
     def test_monta_url_do_curso(self):
         self.assertTrue(app.montar_curso_url("123456").endswith("/cursos/123456/aulas"))
 
-    def test_monta_nome_timestampado_da_pasta_do_curso(self):
+    def test_monta_nome_descritivo_timestampado_da_pasta_do_curso(self):
         with patch.object(app.time, "time", return_value=1_723_680_000.987):
             self.assertEqual(
-                app.montar_nome_pasta_curso("393267"),
-                "CURSO_ESTRATEGIA_393267_1723680000",
+                app.montar_nome_pasta_curso(
+                    "327532",
+                    "BACEN (Analista - Área 2 - Economia e Finanças) "
+                    "Macroeconomia (Parte do Conhecimentos Específicos)",
+                ),
+                "bacen-analista-area-2-economia-e-financas-macroeconomia-parte-"
+                "do-conhecimentos-especificos-id-327532-1723680000",
             )
 
-    def test_cria_subpasta_com_id_e_timestamp(self):
+    def test_cria_subpasta_com_titulo_id_e_timestamp(self):
         with TemporaryDirectory() as diretorio:
             driver = DriverFake()
             with patch("sys.stdout", new_callable=io.StringIO):
                 pasta = app.criar_pasta_do_curso(
-                    Path(diretorio), driver, "393267", 1_723_680_000
+                    Path(diretorio),
+                    driver,
+                    "393267",
+                    "Direito Constitucional — Revisão",
+                    1_723_680_000,
                 )
 
             self.assertTrue(pasta.is_dir())
-            self.assertEqual(pasta.name, "CURSO_ESTRATEGIA_393267_1723680000")
+            self.assertEqual(
+                pasta.name,
+                "direito-constitucional-revisao-id-393267-1723680000",
+            )
             self.assertEqual(
                 driver.comandos_cdp,
                 [
@@ -181,11 +193,48 @@ class HelpersTest(unittest.TestCase):
 
             with patch("sys.stdout", new_callable=io.StringIO) as saida:
                 escolhida = app.criar_pasta_do_curso(
-                    Path(diretorio), driver, "393267"
+                    Path(diretorio),
+                    driver,
+                    "393267",
+                    "Direito Constitucional",
                 )
 
             self.assertEqual(escolhida, pasta)
             self.assertIn("Retomando", saida.getvalue())
+
+    def test_nome_do_curso_vem_da_api_e_as_sessoes_sao_fechadas(self):
+        driver = DriverFake()
+        sessao_web = Mock()
+        sessao_api = Mock()
+        with (
+            patch(
+                "estrategia_downloader.app.criar_sessao_download",
+                return_value=sessao_web,
+            ) as criar_web,
+            patch(
+                "estrategia_downloader.app.create_course_api_session",
+                return_value=sessao_api,
+            ) as criar_api,
+            patch(
+                "estrategia_downloader.app.get_course_name",
+                return_value="Direito Constitucional",
+            ) as consultar,
+        ):
+            nome = app.obter_nome_curso_autenticado(
+                driver,
+                "https://example.test/cursos/393267/aulas",
+                "393267",
+            )
+
+        self.assertEqual(nome, "Direito Constitucional")
+        criar_web.assert_called_once_with(
+            driver,
+            "https://example.test/cursos/393267/aulas",
+        )
+        criar_api.assert_called_once_with(sessao_web)
+        consultar.assert_called_once_with(sessao_api, "393267")
+        sessao_api.close.assert_called_once_with()
+        sessao_web.close.assert_called_once_with()
 
     def test_detecta_maior_resolucao_anunciada(self):
         botao = BotaoFake("Baixar 720p ou 1080p")

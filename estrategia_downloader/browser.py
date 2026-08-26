@@ -24,10 +24,19 @@ def localizar_edge() -> Path | None:
     return next((caminho for caminho in candidatos if caminho.is_file()), None)
 
 
-def create_edge_driver(download_path: Path):
+def create_edge_driver(download_path: Path, *, performance_logging: bool = False):
     opts = EdgeOptions()
     opts.add_argument("--start-maximized")
     opts.unhandled_prompt_behavior = "dismiss and notify"
+    if performance_logging:
+        opts.set_capability(
+            "ms:loggingPrefs",
+            {"performance": "ALL"},
+        )
+        opts.add_experimental_option(
+            "perfLoggingPrefs",
+            {"enableNetwork": True, "enablePage": True},
+        )
     opts.add_experimental_option(
         "prefs",
         {

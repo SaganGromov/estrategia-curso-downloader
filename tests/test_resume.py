@@ -52,6 +52,26 @@ class ResumeTest(unittest.TestCase):
             self.assertEqual(estado["status"], "incompleto")
             self.assertEqual(estado["resumo"]["falhas"], 3)
 
+    def test_reaproveita_pasta_descritiva_incompleta_mais_recente(self):
+        with TemporaryDirectory() as diretorio:
+            base = Path(diretorio)
+            antiga = base / "macroeconomia-id-327532-100"
+            recente = base / "macroeconomia-avancada-id-327532-200"
+            for pasta in (antiga, recente):
+                pasta.mkdir()
+                self.assertTrue(
+                    salvar_estado_execucao(pasta, "327532", "em_andamento")
+                )
+
+            self.assertEqual(localizar_pasta_retomavel(base, "327532"), recente)
+
+    def test_pasta_descritiva_sem_marcador_nao_e_assumida_como_retornavel(self):
+        with TemporaryDirectory() as diretorio:
+            base = Path(diretorio)
+            (base / "macroeconomia-id-327532-200").mkdir()
+
+            self.assertIsNone(localizar_pasta_retomavel(base, "327532"))
+
     def test_marcador_de_outro_curso_nunca_e_reutilizado(self):
         with TemporaryDirectory() as diretorio:
             base = Path(diretorio)

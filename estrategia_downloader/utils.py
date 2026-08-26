@@ -26,6 +26,12 @@ SENSITIVE_QUERY_PARTS = (
     "expires",
     "x-amz-",
     "x-goog-",
+    "email",
+    "firstname",
+    "lastname",
+    "user_id",
+    "userid",
+    "custom_user_id",
 )
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 SECRET_TEXT_PATTERN = re.compile(
@@ -74,6 +80,20 @@ def safe_filename(nome: str, limite: int = 140, fallback: str = "sem nome") -> s
     base = base[:espaco_base].rstrip(" .") or fallback
     nome = f"{base}{sufixo}".rstrip(" .")
     return nome or fallback
+
+
+def slug_nome_curso(nome: str, limite: int = 120) -> str:
+    """Converte o título canônico em um componente de pasta portável e legível."""
+    ascii_name = (
+        unicodedata.normalize("NFKD", str(nome or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")
+    if not slug:
+        raise ValueError("o nome do curso não contém caracteres utilizáveis")
+    return slug[: max(int(limite), 1)].rstrip("-")
 
 
 def parametro_sensivel(nome: str) -> bool:

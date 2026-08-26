@@ -100,16 +100,18 @@ Ao concluir, o painel apresenta um resumo e os botões **Abrir pasta**, **Ver de
 
 ## Pastas de saída
 
-Uma execução nova cria uma pasta rastreável:
+Uma execução nova consulta o título canônico do curso na API e cria uma pasta
+descritiva em `kebab-case`, sem espaços nem acentos. O ID e o timestamp continuam
+no final para tornar cada execução rastreável:
 
 ```text
-CURSO_ESTRATEGIA_<ID>_<UNIX_TIMESTAMP>
+<titulo-do-curso>-id-<ID>-<UNIX_TIMESTAMP>
 ```
 
 Exemplo:
 
 ```text
-CURSO_ESTRATEGIA_393267_1723680000
+bacen-analista-area-2-economia-e-financas-macroeconomia-parte-do-conhecimentos-especificos-id-327532-1723680000
 ├── aula_00
 │   ├── videos
 │   └── pdfs
@@ -134,7 +136,7 @@ automaticamente a pasta incompleta mais recente. Arquivos completos são
 ignorados e os ausentes são procurados novamente. Pastas antigas sem marcador
 também são retomadas uma vez, o que permite completar downloads feitos por
 versões anteriores; depois de uma auditoria concluída sem falhas, uma nova
-execução volta a criar outra pasta timestampada.
+execução volta a criar outra pasta descritiva e timestampada.
 
 Falhas transitórias retomam o `.part` com HTTP `Range` quando o servidor
 permite. Se o servidor ignorar a faixa, o arquivo é reiniciado com segurança;
@@ -224,6 +226,52 @@ ESTRATEGIA_DEBUG
 
 `ESTRATEGIA_EDGE_DRIVER` é apenas uma compatibilidade avançada. Usuários comuns devem deixar o Selenium Manager cuidar do driver.
 
+### Consultar o nome exato de um curso
+
+O utilitário independente abaixo recebe o mesmo ID numérico usado na URL da
+área do aluno:
+
+```powershell
+py .\course_name.py 327532
+```
+
+Depois do login normal no Edge, o `stdout` contém somente o título canônico
+devolvido pela API. Avisos de login e erros usam `stderr`. O Edge é usado apenas
+para estabelecer a sessão legítima; a consulta do nome não lê DOM, HTML nem
+`page_source`.
+
+O código reutilizável está em `estrategia_downloader/course_metadata.py`:
+
+```python
+from estrategia_downloader.course_metadata import (
+    create_course_api_session,
+    get_course_name,
+)
+from estrategia_downloader.downloads import criar_sessao_download
+
+web_session = criar_sessao_download(driver, course_url)
+api_session = create_course_api_session(web_session)
+name = get_course_name(api_session, "327532")
+```
+
+`create_course_api_session()` usa os cookies copiados do Edge somente para
+pedir ao site a credencial temporária usada pela própria SPA. Depois disso, a
+sessão de API contém somente o cabeçalho `Authorization`, e a consulta é um
+`GET` direto. O endpoint não é público nem documentado e pode mudar; nenhuma
+credencial é gravada ou exibida. A versão 2.2 também usa esse título no fluxo
+normal para nomear cada nova pasta de download.
+
+Para repetir a descoberta e a matriz de minimização de autenticação sem abrir
+manualmente dezenas de requisições no DevTools:
+
+```powershell
+py .\tools\probe_course_api.py 327532
+```
+
+O probe habilita o log de performance apenas em sua própria janela controlada,
+classifica respostas Fetch/XHR em memória, reproduz candidatos seguros com
+`requests` e remove todos os valores de query string de seu relatório.
+
 ## Arquitetura
 
 ```text
@@ -236,6 +284,7 @@ iniciar.bat
             ├── app.py          autenticação, varredura e orquestração
             ├── alerts.py       recuperação de alertas do Edge
             ├── browser.py      criação confiável do Edge
+            ├── course_metadata.py consulta direta do nome canônico do curso
             ├── discovery.py    classificação e parsing testável
             ├── downloads.py    HTTP, retomada, disco e progresso
             ├── diagnostics.py  relatório sanitizado
@@ -255,6 +304,7 @@ Os testes não usam credenciais reais e não acessam cursos reais. Eles cobrem:
 - estabilização de listas lazy-loaded, recuperação de vídeos após reabrir a aula
   e bloqueio de falso sucesso quando resta qualquer pendência;
 - retomada automática de pastas incompletas e migração segura de pastas legadas;
+- nomes descritivos de curso em `kebab-case`, com ID e timestamp rastreáveis;
 - nomes reservados e caracteres especiais do Windows;
 - URLs sensíveis e duplicatas;
 - transferências novas e retomadas HTTP válidas/inválidas;
