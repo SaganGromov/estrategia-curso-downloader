@@ -166,6 +166,23 @@ class CompletenessTest(unittest.TestCase):
         self.assertEqual(len(falhas), 1)
         self.assertIn("material sem link", falhas[0])
 
+    def test_icone_decorativo_sem_url_nao_vira_falha(self):
+        elemento = ElementoFake("", {"class": "icon-download"})
+        driver = SimpleNamespace(current_url="https://example.test/aulas/2")
+        with (
+            patch.object(app, "_carregar_lista_dinamica", return_value=[elemento]),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            falhas = []
+            itens = list(
+                app.iterar_materiais_da_aula_atual(
+                    driver, 2, "Aula 2", registrar_falha=falhas.append
+                )
+            )
+
+        self.assertEqual(itens, [])
+        self.assertEqual(falhas, [])
+
     def test_execucao_com_pendencia_nao_pode_ser_marcada_completa(self):
         with self.assertRaises(ConteudoIncompletoError):
             app.garantir_curso_completo(SimpleNamespace(falhas=2))

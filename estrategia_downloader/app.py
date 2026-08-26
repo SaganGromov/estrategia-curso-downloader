@@ -1019,6 +1019,20 @@ def _texto_link(elemento) -> str:
     return " ".join(str(parte).strip() for parte in partes if parte).strip()
 
 
+def _texto_humano_elemento(elemento) -> str:
+    """Texto anunciado ao usuário, sem classes CSS ou tipo do elemento."""
+
+    partes = [
+        elemento.text,
+        elemento.get_attribute("download"),
+        elemento.get_attribute("title"),
+        elemento.get_attribute("aria-label"),
+        elemento.get_attribute("data-original-title"),
+        elemento.get_attribute("data-label"),
+    ]
+    return " ".join(str(parte).strip() for parte in partes if parte).strip()
+
+
 def _normalizar_texto(valor: str) -> str:
     return normalizar_texto(valor)
 
@@ -1182,8 +1196,9 @@ def iterar_materiais_da_aula_atual(
             if not tipo or (tipos_permitidos and tipo not in tipos_permitidos):
                 continue
             if not href:
-                if descricao:
-                    sem_url.add(" ".join(descricao.split())[:160])
+                descricao_humana = _texto_humano_elemento(elemento)
+                if descricao_humana:
+                    sem_url.add(" ".join(descricao_humana.split())[:160])
                 continue
             if href in vistos:
                 continue
