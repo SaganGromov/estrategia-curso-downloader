@@ -7,6 +7,7 @@ import argparse
 import os
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from estrategia_downloader.alerts import RecuperadorAlertas
@@ -46,25 +47,28 @@ def main() -> int:
     driver = None
     try:
         with tempfile.TemporaryDirectory(prefix="estrategia-catalogo-") as directory:
-            driver = create_edge_driver(Path(directory))
-            alertas = RecuperadorAlertas(driver)
-            do_login(
-                driver,
-                email,
-                password,
-                alertas=alertas,
-                submeter_automaticamente=args.submit_login,
-            )
-            password = None
-            web_session = criar_sessao_download(driver, DASHBOARD_COURSES_URL)
-            try:
-                api_session = create_course_api_session(web_session)
-            finally:
-                web_session.close()
-            try:
-                courses = list_accessible_courses(api_session)
-            finally:
-                api_session.close()
+            # stdout é reservado exclusivamente para o catálogo, facilitando
+            # seu uso seguro por outras ferramentas sem misturar mensagens.
+            with redirect_stdout(sys.stderr):
+                driver = create_edge_driver(Path(directory))
+                alertas = RecuperadorAlertas(driver)
+                do_login(
+                    driver,
+                    email,
+                    password,
+                    alertas=alertas,
+                    submeter_automaticamente=args.submit_login,
+                )
+                password = None
+                web_session = criar_sessao_download(driver, DASHBOARD_COURSES_URL)
+                try:
+                    api_session = create_course_api_session(web_session)
+                finally:
+                    web_session.close()
+                try:
+                    courses = list_accessible_courses(api_session)
+                finally:
+                    api_session.close()
             for course in courses:
                 print(f"{course.course_id}\t{course.name}")
         return 0
