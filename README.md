@@ -50,7 +50,8 @@ Isso não modifica o `PATH`, outras instalações de Python nem configurações 
 No painel aberto no Edge:
 
 1. informe o e-mail e a senha da conta;
-2. informe o ID do curso, como `393267`, ou cole a URL completa;
+2. para baixar um curso, informe o ID, como `393267`, ou cole a URL completa;
+   no modo de todos os cursos esse campo não é necessário;
 3. aceite a pasta padrão em `Downloads\Estrategia` ou use **Alterar pasta…**;
 4. escolha o modo;
 5. clique em **Abrir login e iniciar**.
@@ -73,6 +74,20 @@ Uma janela controlada do Edge será aberta com os campos preenchidos. Clique em 
 - slides;
 - mapas mentais;
 - sem vídeos.
+
+**Modo bombado — todos os cursos**:
+
+- consulta o catálogo completo da conta depois da autenticação;
+- percorre todos os cursos acessíveis e baixa o mesmo conteúdo completo de cada
+  um;
+- isola a falha de um curso e continua nos seguintes;
+- em uma coleção já criada, reaudita todos os cursos e baixa somente arquivos
+  ausentes, incompletos ou cujo tamanho não coincide com o servidor.
+
+Escolha a pasta-base antes de iniciar. Na primeira execução o aplicativo cria
+uma coleção identificável; nas execuções seguintes basta escolher a mesma pasta
+ou a própria coleção. O arquivo de controle não contém cookies, credenciais nem
+URLs de download.
 
 O atalho `iniciar_pdfs_e_slides.bat` abre o mesmo painel com o segundo modo já selecionado.
 
@@ -100,9 +115,9 @@ Ao concluir, o painel apresenta um resumo e os botões **Abrir pasta**, **Ver de
 
 ## Pastas de saída
 
-Uma execução nova consulta o título canônico do curso na API e cria uma pasta
-descritiva em `kebab-case`, sem espaços nem acentos. O ID e o timestamp continuam
-no final para tornar cada execução rastreável:
+Uma execução nova de curso individual consulta o título canônico na API e cria
+uma pasta descritiva em `kebab-case`, sem espaços nem acentos. O ID e o timestamp
+continuam no final para tornar cada execução rastreável:
 
 ```text
 <titulo-do-curso>-id-<ID>-<UNIX_TIMESTAMP>
@@ -123,6 +138,23 @@ bacen-analista-area-2-economia-e-financas-macroeconomia-parte-do-conhecimentos-e
 │   └── pdfs
 └── links_estrategia_conteudo.txt
 ```
+
+No modo bombado, a pasta da coleção se chama
+`estrategia-cursos-completos`. Cada curso usa um nome igualmente descritivo, mas
+determinístico e sem timestamp:
+
+```text
+estrategia-cursos-completos/
+└── bacen-analista-area-2-economia-e-financas-macroeconomia-parte-do-conhecimentos-especificos-id-327532/
+    ├── aula_00/
+    ├── aula_01/
+    ├── links_estrategia_conteudo.txt
+    └── .estado_estrategia.json
+```
+
+O marcador `.estrategia_colecao.json` relaciona o ID do painel ao título exato,
+à pasta e ao estado `em_andamento`, `incompleto` ou `completo`. Por isso uma nova
+execução reconhece a coleção mesmo que ela tenha sido interrompida.
 
 Cada aula recebe suas próprias pastas `videos` e `pdfs`, inclusive a
 `aula_00`. PDFs, slides e mapas mentais ficam em `pdfs`. Anexos que não sejam
@@ -258,8 +290,27 @@ name = get_course_name(api_session, "327532")
 pedir ao site a credencial temporária usada pela própria SPA. Depois disso, a
 sessão de API contém somente o cabeçalho `Authorization`, e a consulta é um
 `GET` direto. O endpoint não é público nem documentado e pode mudar; nenhuma
-credencial é gravada ou exibida. A versão 2.2 também usa esse título no fluxo
+credencial é gravada ou exibida. A versão 3.0 também usa esse título no fluxo
 normal para nomear cada nova pasta de download.
+
+### Executar ou dividir o catálogo pelo terminal
+
+A interface é o caminho recomendado. Para auditorias avançadas, o utilitário
+abaixo executa o mesmo orquestrador e aceita volumes adicionais. Um curso já
+registrado permanece no seu volume; um curso novo vai para o volume com mais
+espaço livre:
+
+```powershell
+py .\tools\download_full_catalog.py `
+  --destination "F:\estrategia-cursos-completos" `
+  --spillover "E:\estrategia-cursos-completos-e" `
+  --spillover "G:\estrategia-cursos-completos-g"
+```
+
+`--include-regex` e `--exclude-regex` permitem auditar grupos por ID ou título.
+`--submit-login` pode acionar o botão de login quando as variáveis de ambiente
+já foram fornecidas; captcha e 2FA continuam sendo resolvidos normalmente no
+Edge e nunca são contornados.
 
 Para repetir a descoberta e a matriz de minimização de autenticação sem abrir
 manualmente dezenas de requisições no DevTools:
@@ -284,6 +335,7 @@ iniciar.bat
             ├── app.py          autenticação, varredura e orquestração
             ├── alerts.py       recuperação de alertas do Edge
             ├── browser.py      criação confiável do Edge
+            ├── collection.py   coleção integral, nomes e estado retomável
             ├── course_metadata.py consulta direta do nome canônico do curso
             ├── discovery.py    classificação e parsing testável
             ├── downloads.py    HTTP, retomada, disco e progresso
@@ -304,6 +356,8 @@ Os testes não usam credenciais reais e não acessam cursos reais. Eles cobrem:
 - estabilização de listas lazy-loaded, recuperação de vídeos após reabrir a aula
   e bloqueio de falso sucesso quando resta qualquer pendência;
 - retomada automática de pastas incompletas e migração segura de pastas legadas;
+- catálogo integral, reauditoria, isolamento de falhas, filtros e divisão segura
+  de cursos inteiros entre volumes;
 - nomes descritivos de curso em `kebab-case`, com ID e timestamp rastreáveis;
 - nomes reservados e caracteres especiais do Windows;
 - URLs sensíveis e duplicatas;
