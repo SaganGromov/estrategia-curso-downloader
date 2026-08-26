@@ -10,6 +10,23 @@ let lastLogText = "";
 let currentStatus = "configuracao";
 let setupInitialized = false;
 
+function selectedMode() {
+  return document.querySelector("input[name='mode']:checked")?.value || "completo";
+}
+
+function updateCourseRequirement() {
+  const integral = selectedMode() === "integral";
+  $("course").disabled = integral;
+  $("course").required = !integral;
+  $("courseField").classList.toggle("disabled-field", integral);
+  if (integral) {
+    $("courseFeedback").textContent = "O catálogo completo será obtido após o login.";
+    $("courseFeedback").className = "field-feedback valid";
+  } else {
+    validateCourse();
+  }
+}
+
 async function action(path, body = {}) {
   const response = await api(path, { method: "POST", body: JSON.stringify(body) });
   const data = await response.json();
@@ -35,8 +52,9 @@ function render(state) {
   if (state.pasta_base) $("folderPath").textContent = state.pasta_base;
   $("freeSpace").textContent = state.espaco_disponivel ? `Espaço disponível: ${state.espaco_disponivel}` : "";
   if (!setupInitialized) {
-    const mode = state.modo_reduzido ? "reduzido" : "completo";
+    const mode = state.modo_integral ? "integral" : (state.modo_reduzido ? "reduzido" : "completo");
     document.querySelector(`input[name='mode'][value='${mode}']`).checked = true;
+    updateCourseRequirement();
     setupInitialized = true;
   }
 
@@ -52,7 +70,8 @@ function render(state) {
   $("existing").textContent = state.existentes;
   $("failed").textContent = state.falhas;
   $("lesson").textContent = `${state.aula_atual} / ${state.total_aulas}`;
-  $("destination").textContent = state.pasta_destino || "A pasta será criada após o login";
+  $("courseProgress").textContent = `${state.curso_atual || 0} / ${state.total_cursos || 0}`;
+  $("destination").textContent = state.pasta_destino || "A pasta será preparada após o login";
   $("openFolder").disabled = !state.pasta_destino;
 
   const item = state.item;
@@ -98,6 +117,7 @@ function render(state) {
 }
 
 function validateCourse() {
+  if (selectedMode() === "integral") return true;
   const value = $("course").value.trim();
   const match = value.match(/^\d+$/) || value.match(/\/cursos\/(\d+)(?=[/?#]|$)/);
   const id = match ? (match[1] || match[0]) : "";
@@ -126,6 +146,9 @@ $("togglePassword").addEventListener("click", () => {
 });
 $("course").addEventListener("input", validateCourse);
 $("course").addEventListener("blur", validateCourse);
+document.querySelectorAll("input[name='mode']").forEach((input) => {
+  input.addEventListener("change", updateCourseRequirement);
+});
 
 $("selectFolder").addEventListener("click", async () => {
   $("selectFolder").disabled = true;
@@ -144,7 +167,7 @@ $("startForm").addEventListener("submit", async (event) => {
   $("formError").textContent = "Validando dados…";
   try {
     if (!validateCourse()) throw new Error("Corrija o ID ou a URL do curso.");
-    const mode = document.querySelector("input[name='mode']:checked")?.value || "completo";
+    const mode = selectedMode();
     await action("/api/start", { email: $("email").value, senha: $("password").value, curso: $("course").value, modo: mode });
     $("password").value = "";
     await poll();

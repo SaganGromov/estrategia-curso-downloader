@@ -42,9 +42,9 @@
                 <button id="togglePassword" class="text-button" type="button">Mostrar</button>
               </div>
             </label>
-            <label class="wide">
+            <label id="courseField" class="wide">
               <span>ID ou URL do curso</span>
-              <input id="course" type="text" required placeholder="393267 ou a URL completa do curso">
+              <input id="course" type="text" placeholder="393267 ou a URL completa do curso">
               <small id="courseFeedback" class="field-feedback"></small>
             </label>
             <fieldset class="wide mode-selection">
@@ -56,6 +56,10 @@
               <label class="mode-option">
                 <input type="radio" name="mode" value="reduzido">
                 <span><strong>Materiais de estudo</strong><small>PDFs, slides e mapas mentais, sem vídeos.</small></span>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="mode" value="integral">
+                <span><strong>Modo bombado — todos os cursos</strong><small>Audita e baixa vídeos, PDFs e todos os demais materiais de cada curso da conta.</small></span>
               </label>
             </fieldset>
             <div class="wide">
@@ -99,6 +103,7 @@
           <article class="metric card"><span>Já existentes</span><strong id="existing">0</strong></article>
           <article class="metric card"><span>Aula</span><strong id="lesson">0 / 0</strong></article>
           <article class="metric card"><span>Falhas</span><strong id="failed">0</strong></article>
+          <article class="metric card"><span>Curso</span><strong id="courseProgress">0 / 0</strong></article>
         </div>
 
         <div class="progress-grid">
@@ -126,7 +131,7 @@
         </div>
 
         <article class="card destination-card">
-          <div><p class="eyebrow">DESTINO DESTA EXECUÇÃO</p><p id="destination">A pasta será criada após o login</p></div>
+          <div><p class="eyebrow">DESTINO DESTA EXECUÇÃO</p><p id="destination">A pasta será preparada após o login</p></div>
           <button id="openFolder" class="secondary-button" type="button" disabled>Abrir pasta</button>
         </article>
 

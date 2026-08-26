@@ -69,6 +69,35 @@ class InterfaceApiTest(unittest.TestCase):
                 self.assertEqual(resposta.status_code, 202)
                 configuracao = painel.aguardar_configuracao()
                 self.assertTrue(configuracao["modo_reduzido"])
+                self.assertFalse(configuracao["modo_integral"])
+                self.assertNotIn("não-persistir", str(painel.estado()))
+            finally:
+                painel.parar()
+
+    def test_modo_integral_nao_exige_id_de_curso(self):
+        with TemporaryDirectory() as pasta:
+            painel, sessao, base = self.abrir(pasta)
+            try:
+                resposta = self.post(
+                    sessao,
+                    base,
+                    "/api/start",
+                    {
+                        "email": "ana@example.invalid",
+                        "senha": "não-persistir",
+                        "curso": "",
+                        "modo": "integral",
+                    },
+                )
+                self.assertEqual(resposta.status_code, 202)
+                configuracao = painel.aguardar_configuracao()
+                self.assertTrue(configuracao["modo_integral"])
+                self.assertFalse(configuracao["modo_reduzido"])
+                self.assertIsNone(configuracao["curso_id"])
+                self.assertEqual(
+                    painel.estado()["modo"],
+                    "Modo bombado — todos os cursos",
+                )
                 self.assertNotIn("não-persistir", str(painel.estado()))
             finally:
                 painel.parar()

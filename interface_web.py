@@ -123,6 +123,7 @@ class InterfaceWeb:
                 "PDFs, slides e mapas mentais" if modo_reduzido else "Conteúdo completo"
             ),
             "modo_reduzido": modo_reduzido,
+            "modo_integral": False,
             "email_inicial": email_inicial,
             "curso_inicial": curso_inicial,
             "pasta_base": "",
@@ -130,6 +131,9 @@ class InterfaceWeb:
             "espaco_disponivel": "calculando",
             "aula_atual": 0,
             "total_aulas": 0,
+            "curso_atual": 0,
+            "total_cursos": 0,
+            "curso_nome": "",
             "encontrados": 0,
             "baixados": 0,
             "existentes": 0,
@@ -346,19 +350,24 @@ class InterfaceWeb:
             pasta = self._pasta_selecionada
         email = str(dados.get("email") or self.email_inicial).strip()
         senha = str(dados.get("senha") or self._senha_inicial)
-        curso_id = extrair_id_interface(str(dados.get("curso") or ""))
         modo = str(
             dados.get("modo") or ("reduzido" if self.modo_reduzido else "completo")
+        )
+        modo_integral = modo == "integral"
+        curso_id = (
+            None
+            if modo_integral
+            else extrair_id_interface(str(dados.get("curso") or ""))
         )
         if not email:
             raise ValueError("Informe o e-mail da conta.")
         if not senha:
             raise ValueError("Informe a senha da conta.")
-        if not curso_id:
+        if not modo_integral and not curso_id:
             raise ValueError("Informe um ID numérico ou uma URL válida do curso.")
         if pasta is None:
             raise ValueError("Escolha a pasta-base usando o botão da interface.")
-        if modo not in {"completo", "reduzido"}:
+        if modo not in {"completo", "reduzido", "integral"}:
             raise ValueError("Selecione um modo de download válido.")
         return {
             "email": email,
@@ -366,6 +375,7 @@ class InterfaceWeb:
             "curso_id": curso_id,
             "pasta_base": pasta,
             "modo_reduzido": modo == "reduzido",
+            "modo_integral": modo_integral,
         }
 
     def _iniciar_download(self, configuracao):
@@ -377,11 +387,13 @@ class InterfaceWeb:
             self._estado["email_inicial"] = ""
             self.modo_reduzido = configuracao["modo_reduzido"]
             self._estado["modo_reduzido"] = self.modo_reduzido
-            self._estado["modo"] = (
-                "PDFs, slides e mapas mentais"
-                if self.modo_reduzido
-                else "Conteúdo completo"
-            )
+            self._estado["modo_integral"] = configuracao["modo_integral"]
+            if configuracao["modo_integral"]:
+                self._estado["modo"] = "Modo bombado — todos os cursos"
+            elif self.modo_reduzido:
+                self._estado["modo"] = "PDFs, slides e mapas mentais"
+            else:
+                self._estado["modo"] = "Conteúdo completo"
             self._senha_inicial = ""
         self._configuracao.put_nowait(configuracao)
 
