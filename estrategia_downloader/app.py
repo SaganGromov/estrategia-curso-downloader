@@ -1425,6 +1425,7 @@ def auditar_e_baixar_aula(
     tipos_permitidos=None,
     incluir_videos: bool,
     permitir_vazio: bool,
+    exigir_convergencia: bool = True,
 ) -> dict:
     """Reconcilia inventários independentes e baixa a união observada."""
 
@@ -1567,20 +1568,21 @@ def auditar_e_baixar_aula(
             convergiu = True
             break
 
-    if not convergiu:
+    if exigir_convergencia and not convergiu:
         gerenciador.registrar_falha_descoberta(
             f"{aula_nome}: o inventário remoto não convergiu após "
             f"{INVENTORY_MAX_PASSES} passagens"
         )
-    for descricao in sorted(sem_url_final):
-        gerenciador.registrar_falha_descoberta(
-            f"Aula {aula_num:02d}, material sem link acessível: {descricao}"
-        )
-    for descricao in falhas_video:
-        gerenciador.registrar_falha_descoberta(descricao)
+    if exigir_convergencia:
+        for descricao in sorted(sem_url_final):
+            gerenciador.registrar_falha_descoberta(
+                f"Aula {aula_num:02d}, material sem link acessível: {descricao}"
+            )
+        for descricao in falhas_video:
+            gerenciador.registrar_falha_descoberta(descricao)
 
     videos_sem_arquivo = todos_videos - videos_confirmados
-    if videos_sem_arquivo:
+    if exigir_convergencia and videos_sem_arquivo:
         gerenciador.registrar_falha_descoberta(
             f"{aula_nome}: {len(videos_sem_arquivo)} vídeo(s) anunciado(s) "
             "não tiveram arquivo confirmado"
@@ -1592,7 +1594,12 @@ def auditar_e_baixar_aula(
             f"{aula_nome}: {len(recursos_pendentes)} recurso(s) remoto(s) "
             "não tiveram arquivo local validado"
         )
-    if not permitir_vazio and not todos_materiais and not todos_videos:
+    if (
+        exigir_convergencia
+        and not permitir_vazio
+        and not todos_materiais
+        and not todos_videos
+    ):
         gerenciador.registrar_falha_descoberta(
             f"{aula_nome}: aula numerada vazia; não é seguro afirmar que "
             "nenhum conteúdo está faltando"
@@ -1602,6 +1609,7 @@ def auditar_e_baixar_aula(
         "nome": safe_filename(aula_nome),
         "passagens": passagem,
         "estavel": convergiu,
+        "modo": "estrito" if exigir_convergencia else "oportunistico",
         "materiais": sorted(
             materiais_manifesto.values(), key=lambda item: item["identidade"]
         ),
@@ -1746,6 +1754,7 @@ def executar_conteudo_curso(
                 tipos_permitidos=tipos_permitidos,
                 incluir_videos=not modo_reduzido,
                 permitir_vazio=True,
+                exigir_convergencia=not bool(aulas),
             )
 
             for posicao, aula in enumerate(aulas, start=1):
@@ -1777,6 +1786,7 @@ def executar_conteudo_curso(
                     tipos_permitidos=tipos_permitidos,
                     incluir_videos=not modo_reduzido,
                     permitir_vazio=modo_reduzido,
+                    exigir_convergencia=True,
                 )
                 gerenciador.concluir_aula()
 

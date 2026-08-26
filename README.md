@@ -105,13 +105,19 @@ Os materiais são baixados assim que aparecem; o programa não espera terminar a
 
 Listas dinâmicas são roladas e paginadas até permanecerem estáveis. Se o link
 de um vídeo não aparecer, a aula é reaberta e auditada. No modo completo, cada
-aula é carregada novamente até que os inventários de materiais e vídeos sejam
-idênticos em três leituras independentes; uma categoria vazia exige quatro.
+aula é carregada novamente, em até oito passagens, até que os inventários de
+materiais e vídeos sejam idênticos em três leituras independentes; uma categoria
+vazia exige quatro.
 Isso detecta, por exemplo, PDFs que o React só revela depois que os vídeos já
 apareceram. Um vídeo ou material anunciado pelo site sem link, uma aula numerada
 inteiramente vazia, um inventário instável ou uma transferência que esgotou as
 tentativas passa a ser uma falha real: a execução preserva tudo o que concluiu,
 mas não informa falsamente que o curso está completo.
+
+A rota geral de um curso pode alternar entre vazia e a última aula selecionada.
+Quando existem URLs próprias de aulas, essa rota é usada apenas para ampliar a
+união de recursos; a prova estrita de completude é feita em cada URL de aula.
+Cursos sem aulas numeradas continuam exigindo convergência da própria rota geral.
 
 O botão **Cancelar download** pede confirmação, interrompe a transferência cooperativamente, fecha o Edge controlado e preserva arquivos completos e `.part` válidos.
 

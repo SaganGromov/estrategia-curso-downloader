@@ -300,6 +300,48 @@ class CompletenessTest(unittest.TestCase):
         self.assertEqual(gerenciador.falhas_registradas, [])
         iterar_videos.assert_called_once()
 
+    def test_rota_geral_instavel_e_oportunistica_nao_cria_falha(self):
+        gerenciador = SimpleNamespace(
+            sessao=SimpleNamespace(headers={}),
+            urls_processadas=set(),
+            urls_concluidas=set(),
+            falhas_registradas=[],
+        )
+        gerenciador.registrar_falha_descoberta = (
+            gerenciador.falhas_registradas.append
+        )
+        with (
+            patch.object(
+                app,
+                "coletar_materiais_da_aula_atual",
+                return_value=([], set()),
+            ),
+            patch.object(app, "_inventario_videos_dom", return_value=[]),
+            patch.object(
+                app,
+                "iterar_videos_da_aula_atual",
+                return_value=iter([]),
+            ),
+            patch.object(app, "_navegar_para_auditoria"),
+            patch.object(app, "INVENTORY_MAX_PASSES", 2),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            inventario = app.auditar_e_baixar_aula(
+                SimpleNamespace(),
+                None,
+                io.StringIO(),
+                gerenciador,
+                href="https://site.test/cursos/10",
+                aula_num=0,
+                aula_nome="Materiais gerais",
+                incluir_videos=True,
+                permitir_vazio=True,
+                exigir_convergencia=False,
+            )
+
+        self.assertEqual(inventario["modo"], "oportunistico")
+        self.assertEqual(gerenciador.falhas_registradas, [])
+
 
 if __name__ == "__main__":
     unittest.main()
