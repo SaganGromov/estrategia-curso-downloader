@@ -1203,7 +1203,7 @@ GerenciadorDownloads = GerenciadorDownloadsNovo
 
 
 def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
-    """Persiste o link imediatamente e inicia o download do item."""
+    """Registra metadados sem a URL temporária e inicia o download do item."""
     if chave_deduplicacao_url(item["url"]) in gerenciador.urls_processadas:
         gerenciador.baixar(item)
         return
@@ -1211,7 +1211,7 @@ def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
     titulo_log = item["titulo"].replace(";", ",")
     arquivo_links.write(
         f"{item['aula_num']:02d};{item['tipo']};"
-        f"{item['item_num']:02d};{titulo_log};{sanitizar_url(item['url'])}\n"
+        f"{item['item_num']:02d};{titulo_log};[URL omitida por segurança]\n"
     )
     arquivo_links.flush()
     gerenciador.baixar(item)
@@ -1315,7 +1315,7 @@ def executar_conteudo_curso(
         print("   O download começará assim que cada arquivo for localizado.")
 
         with open(out_txt, "w", encoding="utf-8") as arquivo_links:
-            arquivo_links.write("aula;tipo;numero;titulo;url\n")
+            arquivo_links.write("aula;tipo;numero;titulo;origem\n")
             arquivo_links.flush()
 
             painel.verificar_cancelamento()
