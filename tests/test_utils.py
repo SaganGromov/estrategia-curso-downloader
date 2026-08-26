@@ -87,6 +87,28 @@ class UtilsTest(unittest.TestCase):
         texto = sanitizar_texto("baixando https://cdn.example/a?token=segredo agora")
         self.assertNotIn("segredo", texto)
 
+    def test_texto_de_log_remove_url_assinada_relativa_de_excecao(self):
+        texto = sanitizar_texto(
+            "HTTPSConnectionPool(host='cdn.example', port=443): "
+            "Max retries exceeded with url: "
+            "/storage/curso/cliente-41099099/a.pdf?Expires=123&"
+            "Signature=segredo&Key-Pair-Id=chave (Caused by SSLError)"
+        )
+        self.assertNotIn("segredo", texto)
+        self.assertNotIn("41099099", texto)
+        self.assertNotIn("Expires=123", texto)
+        self.assertNotIn("Key-Pair-Id=chave", texto)
+        self.assertIn("with url: [URL REMOVIDA]", texto)
+        self.assertIn("SSLError", texto)
+
+    def test_texto_de_log_remove_parametros_avulsos(self):
+        texto = sanitizar_texto(
+            "falhou ?Signature=segredo&Expires=123 e token=outro"
+        )
+        self.assertNotIn("segredo", texto)
+        self.assertNotIn("123", texto)
+        self.assertNotIn("outro", texto)
+
 
 if __name__ == "__main__":
     unittest.main()

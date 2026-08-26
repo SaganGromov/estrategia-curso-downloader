@@ -35,9 +35,17 @@ SENSITIVE_QUERY_PARTS = (
     "custom_user_id",
 )
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+RELATIVE_URL_CONTEXT_PATTERN = re.compile(
+    r"(?i)(\b(?:with\s+url|url|uri)\s*:\s*)(/[^\s<>\"']+)"
+)
+QUERY_VALUE_PATTERN = re.compile(
+    r"([?&][A-Za-z0-9_.~-]+)=([^&\s<>\"'()\[\]{}]+)",
+    re.IGNORECASE,
+)
 SECRET_TEXT_PATTERN = re.compile(
-    r"(?i)\b(password|senha|authorization|cookie|ecdsession|"
-    r"x-interface-token)\b\s*[:=]\s*([^\s,;]+)"
+    r"(?i)\b(password|senha|authorization|cookie|ecdsession|token|"
+    r"access[_-]?token|signature|expires?|expiration|key-pair-id|"
+    r"x-interface-token)\b\s*[:=]\s*([^\s,;&]+)"
 )
 
 
@@ -143,7 +151,20 @@ def chave_deduplicacao_url(url: str) -> str:
 
 def sanitizar_texto(texto: str) -> str:
     sem_segredos = SECRET_TEXT_PATTERN.sub(r"\1=[REMOVIDO]", str(texto))
-    return URL_PATTERN.sub(lambda match: sanitizar_url(match.group(0)), sem_segredos)
+    sem_urls_absolutas = URL_PATTERN.sub(
+        lambda match: sanitizar_url(match.group(0)), sem_segredos
+    )
+    # ``requests``/urllib3 costuma representar a URL que falhou apenas como
+    # caminho relativo em mensagens ``with url: /...?Signature=...``. Esse
+    # formato escapava do padrão de URLs absolutas e podia revelar a URL
+    # assinada e identificadores embutidos no caminho. Remova a URL relativa
+    # inteira: a classe da exceção e o host continuam disponíveis no log.
+    sem_urls_relativas = RELATIVE_URL_CONTEXT_PATTERN.sub(
+        r"\1[URL REMOVIDA]", sem_urls_absolutas
+    )
+    # Defesa adicional para parâmetros avulsos em mensagens de bibliotecas que
+    # não usam nenhum dos formatos de URL acima.
+    return QUERY_VALUE_PATTERN.sub(r"\1=REMOVIDO", sem_urls_relativas)
 
 
 def formatar_tamanho(total_bytes: int) -> str:
