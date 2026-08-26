@@ -125,6 +125,34 @@ def parse_num_aula(texto: str) -> int:
     return 9999
 
 
+def atribuir_numeros_aulas(aulas: list[dict]) -> list[dict]:
+    """Substitui números ausentes/duplicados por posições sequenciais estáveis."""
+
+    ordenadas = sorted(
+        enumerate(aulas),
+        key=lambda item: (
+            item[1]["num"] == 9999,
+            item[1]["num"],
+            item[0],
+        ),
+    )
+    usados = set()
+    proximo = 0
+    resultado = []
+    for _ordem, original in ordenadas:
+        aula = dict(original)
+        numero = aula["num"]
+        if numero == 9999 or numero in usados:
+            while proximo in usados:
+                proximo += 1
+            numero = proximo
+        aula["num"] = numero
+        usados.add(numero)
+        proximo = max(proximo, numero + 1)
+        resultado.append(aula)
+    return resultado
+
+
 def _elemento_visivel(driver, css_selector: str) -> bool:
     """Retorna True se ao menos um elemento do seletor estiver visível."""
     try:
@@ -414,11 +442,19 @@ def listar_aulas(driver, curso_url: str, alertas=None):
         descricao="aulas do curso",
     )
     if not itens:
-        raise RuntimeError(
-            "Nenhuma aula foi encontrada na página do curso. "
-            f"URL atual: {driver.current_url!r}. Confira o ID informado e se a conta "
-            "tem acesso a esse curso."
+        pagina_esperada = urlparse(curso_url).path.rstrip("/")
+        pagina_atual = urlparse(driver.current_url).path.rstrip("/")
+        if pagina_atual != pagina_esperada:
+            raise RuntimeError(
+                "A página do curso não permaneceu no endereço solicitado. "
+                f"URL atual: {driver.current_url!r}. Confira se a conta ainda "
+                "possui acesso."
+            )
+        print(
+            "📚 Nenhuma aula numerada foi encontrada; a página geral ainda será "
+            "auditada em busca de materiais."
         )
+        return []
 
     aulas = []
     vistos = set()
@@ -441,7 +477,7 @@ def listar_aulas(driver, curso_url: str, alertas=None):
             }
         )
 
-    aulas.sort(key=lambda x: x["num"])
+    aulas = atribuir_numeros_aulas(aulas)
 
     print(f"📚 Total de aulas identificadas: {len(aulas)}")
     for a in aulas:

@@ -143,6 +143,18 @@ class HelpersTest(unittest.TestCase):
     def test_monta_url_do_curso(self):
         self.assertTrue(app.montar_curso_url("123456").endswith("/cursos/123456/aulas"))
 
+    def test_aulas_sem_numero_recebem_posicoes_sem_aula_9999(self):
+        aulas = app.atribuir_numeros_aulas(
+            [
+                {"num": 1, "nome": "Aula 1", "href": "/1"},
+                {"num": 9999, "nome": "Apresentação", "href": "/intro"},
+                {"num": 1, "nome": "Revisão", "href": "/revisao"},
+            ]
+        )
+
+        self.assertEqual([aula["num"] for aula in aulas], [1, 2, 3])
+        self.assertNotIn(9999, [aula["num"] for aula in aulas])
+
     def test_monta_nome_descritivo_timestampado_da_pasta_do_curso(self):
         with patch.object(app.time, "time", return_value=1_723_680_000.987):
             self.assertEqual(
