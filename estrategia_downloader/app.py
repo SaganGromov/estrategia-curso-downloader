@@ -991,6 +991,7 @@ def iterar_videos_da_aula_atual(
     aula_nome: str,
     alertas=None,
     registrar_falha=None,
+    ignorar_posicoes=None,
 ):
     """Entrega todos os vídeos e reabre a aula para recuperar links ausentes."""
     videos = _carregar_videos_da_aula(driver, alertas)
@@ -1004,7 +1005,12 @@ def iterar_videos_da_aula_atual(
     total = len(videos)
     print(f"   🔎 Vídeos encontrados após estabilizar a página: {total}")
     url_aula = driver.current_url
-    pendentes = set(range(total))
+    posicoes_confirmadas = {
+        int(posicao) - 1
+        for posicao in (ignorar_posicoes or ())
+        if 1 <= int(posicao) <= total
+    }
+    pendentes = set(range(total)) - posicoes_confirmadas
     titulos = {}
 
     for passagem in range(1, VIDEO_RECOVERY_PASSES + 1):
@@ -1539,12 +1545,18 @@ def auditar_e_baixar_aula(
             registros_por_posicao = {
                 registro["numero"]: registro for registro in registros_video
             }
+            posicoes_confirmadas = {
+                registro["numero"]
+                for registro in registros_video
+                if registro["chave"] in videos_confirmados
+            }
             for item in iterar_videos_da_aula_atual(
                 driver,
                 aula_num,
                 aula_nome,
                 alertas,
                 falhas_video.append,
+                ignorar_posicoes=posicoes_confirmadas,
             ):
                 chave = resource_key(item["url"])
                 arquivos_manifesto[chave] = safe_resource_record(item)
