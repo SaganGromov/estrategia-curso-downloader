@@ -17,6 +17,7 @@ from selenium.common.exceptions import (
     WebDriverException,
 )
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
@@ -358,6 +359,8 @@ def do_login(
     password: str,
     verificar_cancelamento=None,
     alertas=None,
+    *,
+    submeter_automaticamente: bool = False,
 ):
     if alertas is None:
         driver.get(LOGIN_URL)
@@ -398,7 +401,31 @@ def do_login(
     pwd_el.clear()
     pwd_el.send_keys(password)
 
-    print("\n➡️ No Edge, clique em Entrar e conclua 2FA/captcha, se aparecer.")
+    if submeter_automaticamente:
+        # Opção destinada a execuções locais explicitamente autorizadas. O
+        # fluxo padrão continua aguardando o clique do usuário e qualquer
+        # captcha/2FA apresentado pelo site continua intacto.
+        botoes = driver.find_elements(
+            By.CSS_SELECTOR,
+            "button[type='submit'], input[type='submit']",
+        )
+        botao = next(
+            (
+                item
+                for item in botoes
+                if item.is_displayed() and item.is_enabled()
+            ),
+            None,
+        )
+        if botao is not None:
+            botao.click()
+        else:
+            pwd_el.send_keys(Keys.ENTER)
+
+    if submeter_automaticamente:
+        print("\n➡️ Login enviado; conclua 2FA/captcha no Edge, se aparecer.")
+    else:
+        print("\n➡️ No Edge, clique em Entrar e conclua 2FA/captcha, se aparecer.")
     print("   Não é mais necessário apertar ENTER no PowerShell.")
     print(f"   Aguardando o painel por até {LOGIN_TIMEOUT} segundos...", flush=True)
 
