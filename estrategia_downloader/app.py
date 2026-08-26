@@ -1068,7 +1068,30 @@ def _url_do_elemento(elemento, url_atual: str) -> str:
 
 
 def _titulo_material(elemento, href: str, indice: int, tipo: str) -> str:
-    titulo = _texto_link(elemento)
+    # Classes CSS e estados transitórios (por exemplo ``LessonButton`` e
+    # ``Baixado``) não pertencem ao título canônico e mudam após um clique.
+    candidatos = [
+        elemento.text,
+        elemento.get_attribute("download"),
+        elemento.get_attribute("title"),
+        elemento.get_attribute("aria-label"),
+        elemento.get_attribute("data-original-title"),
+        elemento.get_attribute("data-label"),
+    ]
+    titulo = next(
+        (
+            " ".join(str(valor).split())
+            for valor in candidatos
+            if valor and str(valor).strip()
+        ),
+        "",
+    )
+    titulo = re.sub(
+        r"(?:\s+(?:baixado|lessonbutton))+\s*$",
+        "",
+        titulo,
+        flags=re.IGNORECASE,
+    )
     nome_url = Path(unquote(urlparse(href).path)).name
     rotulo = {
         "pdf": "PDF",

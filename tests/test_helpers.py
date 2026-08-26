@@ -143,6 +143,16 @@ class HelpersTest(unittest.TestCase):
     def test_monta_url_do_curso(self):
         self.assertTrue(app.montar_curso_url("123456").endswith("/cursos/123456/aulas"))
 
+    def test_titulo_material_ignora_estado_e_classe_transitorios(self):
+        element = BotaoFake(
+            "Baixar Livro Eletrônico versão original Baixado",
+            {"class": "LessonButton", "type": "button"},
+        )
+        self.assertEqual(
+            app._titulo_material(element, "/apostila.pdf", 1, "pdf"),
+            "Baixar Livro Eletrônico versão original",
+        )
+
     def test_aulas_sem_numero_recebem_posicoes_sem_aula_9999(self):
         aulas = app.atribuir_numeros_aulas(
             [
