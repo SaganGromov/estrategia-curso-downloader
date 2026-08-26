@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ARQUIVO_ESTADO = ".estado_estrategia.json"
-STATUS_RETOMAVEIS = {"em_andamento", "incompleto"}
+STATUS_RETOMAVEIS = {
+    "em_andamento",
+    "incompleto",
+    "aguardando_liberacao",
+}
 
 
 def _ler_estado(pasta: Path) -> dict | None:

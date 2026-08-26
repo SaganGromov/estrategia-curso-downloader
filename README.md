@@ -164,8 +164,15 @@ estrategia-cursos-completos/
 ```
 
 O marcador `.estrategia_colecao.json` relaciona o ID do painel ao título exato,
-à pasta e ao estado `em_andamento`, `incompleto` ou `completo`. Por isso uma nova
-execução reconhece a coleção mesmo que ela tenha sido interrompida.
+à pasta e ao estado `em_andamento`, `incompleto`, `completo` ou
+`aguardando_liberacao`. Por isso uma nova execução reconhece a coleção mesmo que
+ela tenha sido interrompida.
+
+Quando um curso ainda não possui conteúdo acessível, mas a página anuncia
+explicitamente datas futuras, ele recebe `aguardando_liberacao` e a próxima data
+fica no manifesto. Isso não é contado como erro nem como conclusão definitiva:
+uma execução posterior reutiliza a mesma pasta e verifica se as aulas já foram
+liberadas.
 
 O arquivo `.inventario_estrategia.json` registra a versão da auditoria e os
 recursos reconciliados por aula. As identidades são hashes SHA-256; URLs

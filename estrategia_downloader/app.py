@@ -4,6 +4,7 @@ import re
 import sys
 import time
 import traceback
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -611,6 +612,30 @@ def listar_aulas_auditadas(driver, curso_url: str, alertas=None):
         "a lista de aulas não permaneceu idêntica em leituras independentes; "
         "o curso não pode ser marcado como completo"
     )
+
+
+def detectar_liberacoes_futuras(driver, *, hoje: date | None = None) -> list[date]:
+    """Extrai somente avisos explícitos de liberação posteriores ao dia atual."""
+
+    texto = driver.execute_script(
+        "return document.body ? (document.body.innerText || '') : '';"
+    )
+    if not isinstance(texto, str):
+        return []
+    referencia = hoje or date.today()
+    datas = set()
+    for valor in re.findall(
+        r"\bDispon(?:í|i)vel\s+em\s+([0-3]\d/[01]\d/\d{4})\b",
+        texto,
+        flags=re.IGNORECASE,
+    ):
+        try:
+            liberacao = datetime.strptime(valor, "%d/%m/%Y").date()
+        except ValueError:
+            continue
+        if liberacao > referencia:
+            datas.add(liberacao)
+    return sorted(datas)
 
 
 def aguardar_conteudo_aula(driver, alertas=None, timeout=SELENIUM_WAIT_TIMEOUT):
@@ -1716,6 +1741,53 @@ def executar_conteudo_curso(
             "em_andamento",
             inventario_aulas,
         )
+        liberacoes_futuras = (
+            detectar_liberacoes_futuras(driver) if not aulas else []
+        )
+        if liberacoes_futuras:
+            datas = [valor.isoformat() for valor in liberacoes_futuras]
+            resumo = {
+                "encontrados": 0,
+                "baixados": 0,
+                "existentes": 0,
+                "falhas": 0,
+                "falhas_descoberta": 0,
+                "bytes_concluidos": 0,
+                "volume": "0.0 B",
+                "tempo": "00:00",
+                "velocidade_media": "0 B/s",
+                "versao_auditoria": AUDIT_VERSION,
+                "aulas_confirmadas": 0,
+                "recursos_unicos_manifesto": 0,
+                "status_curso": "aguardando_liberacao",
+                "liberacoes_futuras": datas,
+                "proxima_liberacao": datas[0],
+            }
+            save_inventory(
+                download_dir,
+                curso_id,
+                "aguardando_liberacao",
+                inventario_aulas,
+                metadata={
+                    "liberacoes_futuras": datas,
+                    "proxima_liberacao": datas[0],
+                },
+            )
+            if not salvar_estado_execucao(
+                download_dir,
+                curso_id,
+                "aguardando_liberacao",
+                resumo,
+            ):
+                raise RuntimeError(
+                    "não foi possível atualizar o marcador de liberação futura"
+                )
+            concluido = True
+            print(
+                f"\n🗓️ Curso {curso_id} sem conteúdo liberado hoje; "
+                f"próxima liberação anunciada para {datas[0]}."
+            )
+            return resumo
         gerenciador = GerenciadorDownloads(
             download_dir,
             driver,
@@ -1874,6 +1946,9 @@ def _resumo_colecao(resumos: list[dict], falhas_cursos: int, inicio: float) -> d
     existentes = sum(int(item.get("existentes", 0)) for item in resumos)
     falhas_itens = sum(int(item.get("falhas", 0)) for item in resumos)
     bytes_concluidos = sum(int(item.get("bytes_concluidos", 0)) for item in resumos)
+    cursos_agendados = sum(
+        item.get("status_curso") == "aguardando_liberacao" for item in resumos
+    )
     return {
         "encontrados": encontrados,
         "baixados": baixados,
@@ -1881,6 +1956,7 @@ def _resumo_colecao(resumos: list[dict], falhas_cursos: int, inicio: float) -> d
         "falhas": falhas_itens + falhas_cursos,
         "cursos_total": len(resumos),
         "cursos_incompletos": falhas_cursos,
+        "cursos_aguardando_liberacao": cursos_agendados,
         "bytes_concluidos": bytes_concluidos,
         "volume": formatar_tamanho(bytes_concluidos),
         "tempo": formatar_duracao(time.monotonic() - inicio),
@@ -2035,11 +2111,12 @@ def executar_colecao_integral(
             continue
 
         resumos.append(resumo)
+        status_curso = resumo.get("status_curso", "completo")
         update_course_status(
             estado,
             curso,
             pasta_curso,
-            "completo",
+            status_curso,
             summary=resumo,
         )
         save_collection(raiz_curso, estado)
@@ -2058,7 +2135,14 @@ def executar_colecao_integral(
             + ", ".join(falhas),
             resumo_final,
         )
-    print("\n🎉 Todos os cursos do catálogo foram auditados sem pendências.")
+    if resumo_final["cursos_aguardando_liberacao"]:
+        print(
+            "\n🎉 Todo o conteúdo atualmente disponível foi auditado; "
+            f"{resumo_final['cursos_aguardando_liberacao']} curso(s) aguardam "
+            "datas de liberação anunciadas pelo portal."
+        )
+    else:
+        print("\n🎉 Todos os cursos do catálogo foram auditados sem pendências.")
     return resumo_final
 
 

@@ -78,6 +78,8 @@ def save_inventory(
     course_id: str,
     status: str,
     lessons: dict,
+    *,
+    metadata: dict | None = None,
 ) -> None:
     """Grava atomicamente o inventário sem cookies, tokens ou URLs."""
 
@@ -89,6 +91,8 @@ def save_inventory(
         "atualizado_em": datetime.now(UTC).isoformat(),
         "aulas": lessons,
     }
+    if metadata:
+        value["metadados"] = metadata
     destination = Path(folder) / INVENTORY_FILE
     temporary = Path(folder) / f"{INVENTORY_FILE}.tmp"
     try:

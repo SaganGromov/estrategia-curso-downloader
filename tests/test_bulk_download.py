@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -57,6 +58,22 @@ class DriverFake:
 
 
 class BulkDownloadTest(unittest.TestCase):
+    def test_detects_only_valid_future_release_notices(self):
+        driver = Mock()
+        driver.execute_script.return_value = (
+            "Disponível em 01/09/2099\n"
+            "Disponivel em 08/09/2099\n"
+            "Disponível em 31/02/2099\n"
+            "Disponível em 01/01/2020"
+        )
+
+        releases = app.detectar_liberacoes_futuras(
+            driver,
+            hoje=date(2099, 8, 26),
+        )
+
+        self.assertEqual(releases, [date(2099, 9, 1), date(2099, 9, 8)])
+
     def test_course_wrapper_preserves_the_original_user_facing_error(self):
         error = ProcessamentoCursoError(
             "100",
@@ -141,6 +158,45 @@ class BulkDownloadTest(unittest.TestCase):
             self.assertEqual(state["cursos"]["200"]["status"], "completo")
             self.assertEqual(caught.exception.resumo["cursos_incompletos"], 1)
 
+    def test_scheduled_course_is_persisted_without_becoming_complete_or_failure(self):
+        courses = [CourseSummary("100", "Curso Futuro")]
+        scheduled = summary(found=0, downloaded=0, existing=0, size=0)
+        scheduled.update(
+            {
+                "status_curso": "aguardando_liberacao",
+                "liberacoes_futuras": ["2099-09-01"],
+                "proxima_liberacao": "2099-09-01",
+            }
+        )
+        panel = PanelFake()
+        with TemporaryDirectory() as directory, \
+            patch.object(
+                app,
+                "obter_catalogo_cursos_autenticado",
+                return_value=courses,
+            ), \
+            patch.object(
+                app,
+                "executar_conteudo_curso",
+                return_value=scheduled,
+            ), \
+            patch("sys.stdout"):
+            result = app.executar_colecao_integral(
+                DriverFake(),
+                Mock(),
+                panel,
+                Path(directory),
+            )
+
+            root = Path(directory) / COLLECTION_DIRECTORY_NAME
+            state = json.loads((root / COLLECTION_MARKER).read_text("utf-8"))
+            self.assertEqual(
+                state["cursos"]["100"]["status"],
+                "aguardando_liberacao",
+            )
+            self.assertEqual(result["cursos_incompletos"], 0)
+            self.assertEqual(result["cursos_aguardando_liberacao"], 1)
+
     def test_filter_and_spillover_only_process_the_selected_course(self):
         courses = [
             CourseSummary("100", "BACEN - Curso"),
@@ -203,6 +259,41 @@ class BulkDownloadTest(unittest.TestCase):
             state = json.loads((destination / ARQUIVO_ESTADO).read_text("utf-8"))
             self.assertEqual(state["status"], "incompleto")
             self.assertEqual(state["curso_id"], "100")
+
+    def test_future_only_course_gets_a_resumable_scheduled_marker(self):
+        panel = PanelFake()
+        driver = DriverFake()
+        driver.execute_script = Mock(
+            return_value="Aula 00 — Disponível em 01/09/2099"
+        )
+        with TemporaryDirectory() as directory, \
+            patch.object(app, "listar_aulas_auditadas", return_value=[]), \
+            patch("sys.stdout"):
+            destination = Path(directory) / "curso-id-100"
+            destination.mkdir()
+
+            result = app.executar_conteudo_curso(
+                driver,
+                Mock(),
+                panel,
+                "100",
+                "Curso Futuro",
+                destination,
+                modo_reduzido=False,
+                auditar_existentes=True,
+            )
+
+            state = json.loads((destination / ARQUIVO_ESTADO).read_text("utf-8"))
+            inventory = json.loads(
+                (destination / ".inventario_estrategia.json").read_text("utf-8")
+            )
+            self.assertEqual(result["status_curso"], "aguardando_liberacao")
+            self.assertEqual(state["status"], "aguardando_liberacao")
+            self.assertEqual(inventory["status"], "aguardando_liberacao")
+            self.assertEqual(
+                inventory["metadados"]["proxima_liberacao"],
+                "2099-09-01",
+            )
 
 
 if __name__ == "__main__":

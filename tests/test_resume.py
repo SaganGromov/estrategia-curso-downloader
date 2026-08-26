@@ -52,6 +52,22 @@ class ResumeTest(unittest.TestCase):
             self.assertEqual(estado["status"], "incompleto")
             self.assertEqual(estado["resumo"]["falhas"], 3)
 
+    def test_curso_aguardando_liberacao_e_reavaliado_na_mesma_pasta(self):
+        with TemporaryDirectory() as diretorio:
+            base = Path(diretorio)
+            pasta = base / "CURSO_ESTRATEGIA_327532_200"
+            pasta.mkdir()
+            self.assertTrue(
+                salvar_estado_execucao(
+                    pasta,
+                    "327532",
+                    "aguardando_liberacao",
+                    {"proxima_liberacao": "2099-09-01"},
+                )
+            )
+
+            self.assertEqual(localizar_pasta_retomavel(base, "327532"), pasta)
+
     def test_reaproveita_pasta_descritiva_incompleta_mais_recente(self):
         with TemporaryDirectory() as diretorio:
             base = Path(diretorio)

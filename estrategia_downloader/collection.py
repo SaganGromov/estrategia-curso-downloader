@@ -16,7 +16,13 @@ COLLECTION_DIRECTORY_NAME = "estrategia-cursos-completos"
 COLLECTION_MARKER = ".estrategia_colecao.json"
 COLLECTION_KIND = "estrategia-cursos-completos"
 COLLECTION_SCHEMA = 1
-COURSE_STATUS = {"pendente", "em_andamento", "completo", "incompleto"}
+COURSE_STATUS = {
+    "pendente",
+    "em_andamento",
+    "completo",
+    "incompleto",
+    "aguardando_liberacao",
+}
 
 
 class CollectionError(RuntimeError):
