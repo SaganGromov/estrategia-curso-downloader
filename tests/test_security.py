@@ -7,7 +7,11 @@ from unittest.mock import Mock
 
 from estrategia_downloader.app import registrar_e_baixar
 from estrategia_downloader.diagnostics import criar_diagnostico
-from estrategia_downloader.integrity import safe_resource_record, save_inventory
+from estrategia_downloader.integrity import (
+    load_inventory_lessons,
+    safe_resource_record,
+    save_inventory,
+)
 
 
 class SecurityDiagnosticsTest(unittest.TestCase):
@@ -79,6 +83,25 @@ class SecurityDiagnosticsTest(unittest.TestCase):
         self.assertNotIn("segredo", texto)
         self.assertNotIn("Expires", texto)
         self.assertEqual(len(registro["identidade"]), 64)
+
+    def test_checkpoint_compativel_e_recuperado_sem_promover_status(self):
+        aulas = {"aula_05_posicao_06": {"estavel": True, "arquivos": []}}
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            save_inventory(folder, "327530", "em_andamento", aulas)
+
+            recovered = load_inventory_lessons(folder, "327530")
+
+        self.assertEqual(recovered, aulas)
+
+    def test_checkpoint_de_outro_curso_nao_e_reutilizado(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            save_inventory(folder, "327530", "incompleto", {"aula_05": {}})
+
+            recovered = load_inventory_lessons(folder, "327532")
+
+        self.assertEqual(recovered, {})
 
 
 if __name__ == "__main__":

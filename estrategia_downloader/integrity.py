@@ -47,6 +47,32 @@ def safe_video_record(identity: str, position: int, title: str) -> dict:
     }
 
 
+def load_inventory_lessons(folder: Path, course_id: str) -> dict:
+    """Recupera checkpoints compatíveis sem confiar neles como conclusão."""
+
+    source = Path(folder) / INVENTORY_FILE
+    try:
+        value = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    if value.get("schema") != INVENTORY_SCHEMA:
+        return {}
+    if value.get("versao_auditoria") != AUDIT_VERSION:
+        return {}
+    if str(value.get("curso_id")) != str(course_id):
+        return {}
+    lessons = value.get("aulas")
+    if not isinstance(lessons, dict):
+        return {}
+    return {
+        str(key): lesson
+        for key, lesson in lessons.items()
+        if isinstance(key, str) and isinstance(lesson, dict)
+    }
+
+
 def save_inventory(
     folder: Path,
     course_id: str,

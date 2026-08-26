@@ -70,6 +70,7 @@ from .errors import (
 from .integrity import (
     AUDIT_VERSION,
     fingerprint,
+    load_inventory_lessons,
     resource_key,
     safe_resource_record,
     safe_video_record,
@@ -1690,7 +1691,7 @@ def executar_conteudo_curso(
         print("⚠️ Não foi possível gravar o marcador inicial deste curso.")
 
     gerenciador = None
-    inventario_aulas = {}
+    inventario_aulas = load_inventory_lessons(download_dir, curso_id)
     concluido = False
     try:
         save_inventory(
@@ -1700,6 +1701,21 @@ def executar_conteudo_curso(
             inventario_aulas,
         )
         aulas = listar_aulas_auditadas(driver, curso_url, alertas)
+        chaves_atuais = {"geral"} | {
+            f"aula_{aula['num']:02d}_posicao_{posicao:02d}"
+            for posicao, aula in enumerate(aulas, start=1)
+        }
+        inventario_aulas = {
+            chave: valor
+            for chave, valor in inventario_aulas.items()
+            if chave in chaves_atuais
+        }
+        save_inventory(
+            download_dir,
+            curso_id,
+            "em_andamento",
+            inventario_aulas,
+        )
         gerenciador = GerenciadorDownloads(
             download_dir,
             driver,
@@ -1756,6 +1772,12 @@ def executar_conteudo_curso(
                 permitir_vazio=True,
                 exigir_convergencia=not bool(aulas),
             )
+            save_inventory(
+                download_dir,
+                curso_id,
+                "em_andamento",
+                inventario_aulas,
+            )
 
             for posicao, aula in enumerate(aulas, start=1):
                 painel.verificar_cancelamento()
@@ -1787,6 +1809,12 @@ def executar_conteudo_curso(
                     incluir_videos=not modo_reduzido,
                     permitir_vazio=modo_reduzido,
                     exigir_convergencia=True,
+                )
+                save_inventory(
+                    download_dir,
+                    curso_id,
+                    "em_andamento",
+                    inventario_aulas,
                 )
                 gerenciador.concluir_aula()
 

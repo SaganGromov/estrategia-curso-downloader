@@ -170,6 +170,9 @@ execução reconhece a coleção mesmo que ela tenha sido interrompida.
 O arquivo `.inventario_estrategia.json` registra a versão da auditoria e os
 recursos reconciliados por aula. As identidades são hashes SHA-256; URLs
 temporárias, parâmetros assinados, cookies e tokens nunca são persistidos.
+O arquivo é atualizado atomicamente depois de cada aula e seus checkpoints
+compatíveis são preservados em uma retomada, sempre com estado `em_andamento`
+ou `incompleto` até que o curso inteiro volte a passar pela auditoria.
 Somente um inventário com `versao_auditoria: 2`, convergência das leituras e
 arquivos locais validados sustenta o estado `completo`. Marcadores produzidos
 por versões anteriores devem ser considerados pendentes até uma nova auditoria.
