@@ -9,6 +9,7 @@ from estrategia_downloader.collection import (
     CollectionError,
     course_folder_name,
     ensure_course_folder,
+    invalidate_legacy_completions,
     open_collection,
     save_collection,
     update_course_status,
@@ -115,6 +116,25 @@ class CollectionTest(unittest.TestCase):
             self.assertEqual(record["status"], "incompleto")
             self.assertEqual(record["resumo"], {"falhas": 1})
             self.assertNotIn("segredo", record["erro"])
+
+    def test_legacy_completion_is_invalidated_until_version_two_audit(self):
+        state = {
+            "schema": 1,
+            "tipo": "estrategia-cursos-completos",
+            "cursos": {
+                "10": {"status": "completo", "resumo": {"falhas": 0}},
+                "20": {
+                    "status": "completo",
+                    "resumo": {"versao_auditoria": 2},
+                },
+            },
+        }
+
+        invalidated = invalidate_legacy_completions(state)
+
+        self.assertEqual(invalidated, ["10"])
+        self.assertEqual(state["cursos"]["10"]["status"], "incompleto")
+        self.assertEqual(state["cursos"]["20"]["status"], "completo")
 
 
 if __name__ == "__main__":

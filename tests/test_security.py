@@ -1,10 +1,13 @@
 import json
 import io
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock
 
 from estrategia_downloader.app import registrar_e_baixar
 from estrategia_downloader.diagnostics import criar_diagnostico
+from estrategia_downloader.integrity import safe_resource_record, save_inventory
 
 
 class SecurityDiagnosticsTest(unittest.TestCase):
@@ -51,6 +54,31 @@ class SecurityDiagnosticsTest(unittest.TestCase):
         self.assertNotIn('"abc"', relatorio)
         self.assertIn("REMOVIDO", relatorio)
         self.assertEqual(json.loads(relatorio)["fase"], "teste")
+
+    def test_inventario_persiste_hash_sem_url_ou_assinatura(self):
+        item = {
+            "tipo": "pdf",
+            "item_num": 1,
+            "titulo": "Livro Eletrônico",
+            "url": "https://api.invalid/pdf/10?signature=segredo&Expires=20",
+        }
+        registro = safe_resource_record(item)
+
+        with TemporaryDirectory() as directory:
+            save_inventory(
+                Path(directory),
+                "327530",
+                "completo",
+                {"aula_05": {"arquivos": [registro]}},
+            )
+            texto = (Path(directory) / ".inventario_estrategia.json").read_text(
+                encoding="utf-8"
+            )
+
+        self.assertNotIn("api.invalid", texto)
+        self.assertNotIn("segredo", texto)
+        self.assertNotIn("Expires", texto)
+        self.assertEqual(len(registro["identidade"]), 64)
 
 
 if __name__ == "__main__":

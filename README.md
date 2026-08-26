@@ -104,10 +104,14 @@ Os materiais são baixados assim que aparecem; o programa não espera terminar a
 - espaço livre no destino.
 
 Listas dinâmicas são roladas e paginadas até permanecerem estáveis. Se o link
-de um vídeo não aparecer, a aula é reaberta e auditada em até três passagens.
-Um vídeo ou material anunciado pelo site sem link, assim como uma transferência
-que esgotou as tentativas, passa a ser uma falha real: a execução preserva tudo
-o que concluiu, mas não informa falsamente que o curso está completo.
+de um vídeo não aparecer, a aula é reaberta e auditada. No modo completo, cada
+aula é carregada novamente até que os inventários de materiais e vídeos sejam
+idênticos em três leituras independentes; uma categoria vazia exige quatro.
+Isso detecta, por exemplo, PDFs que o React só revela depois que os vídeos já
+apareceram. Um vídeo ou material anunciado pelo site sem link, uma aula numerada
+inteiramente vazia, um inventário instável ou uma transferência que esgotou as
+tentativas passa a ser uma falha real: a execução preserva tudo o que concluiu,
+mas não informa falsamente que o curso está completo.
 
 O botão **Cancelar download** pede confirmação, interrompe a transferência cooperativamente, fecha o Edge controlado e preserva arquivos completos e `.part` válidos.
 
@@ -149,12 +153,20 @@ estrategia-cursos-completos/
     ├── aula_00/
     ├── aula_01/
     ├── links_estrategia_conteudo.txt
+    ├── .inventario_estrategia.json
     └── .estado_estrategia.json
 ```
 
 O marcador `.estrategia_colecao.json` relaciona o ID do painel ao título exato,
 à pasta e ao estado `em_andamento`, `incompleto` ou `completo`. Por isso uma nova
 execução reconhece a coleção mesmo que ela tenha sido interrompida.
+
+O arquivo `.inventario_estrategia.json` registra a versão da auditoria e os
+recursos reconciliados por aula. As identidades são hashes SHA-256; URLs
+temporárias, parâmetros assinados, cookies e tokens nunca são persistidos.
+Somente um inventário com `versao_auditoria: 2`, convergência das leituras e
+arquivos locais validados sustenta o estado `completo`. Marcadores produzidos
+por versões anteriores devem ser considerados pendentes até uma nova auditoria.
 
 Cada aula recebe suas próprias pastas `videos` e `pdfs`, inclusive a
 `aula_00`. PDFs, slides e mapas mentais ficam em `pdfs`. Anexos que não sejam
@@ -222,7 +234,10 @@ Confira a conexão e tente novamente. Proxy corporativo, firewall, AppLocker, an
 
 ### O curso não tem aulas ou materiais
 
-Confira o ID/URL, confirme que o login terminou e verifique se a conta realmente possui acesso ao curso.
+Confira o ID/URL, confirme que o login terminou e verifique se a conta realmente
+possui acesso ao curso. Por segurança, um curso sem nenhum arquivo e uma aula
+numerada vazia permanecem `incompleto`: ausência de itens no DOM não é aceita
+como prova de que o catálogo remoto está realmente vazio.
 
 ### A execução terminou com conteúdo pendente
 

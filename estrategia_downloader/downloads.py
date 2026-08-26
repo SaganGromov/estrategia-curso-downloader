@@ -146,6 +146,7 @@ class GerenciadorDownloads:
         self.max_tentativas = max_tentativas
         self.nomes_por_diretorio = {}
         self.urls_processadas = set()
+        self.urls_concluidas = set()
         self.encontrados = 0
         self.baixados = 0
         self.existentes = 0
@@ -488,7 +489,7 @@ class GerenciadorDownloads:
         chave = chave_deduplicacao_url(url)
         if chave in self.urls_processadas:
             print("      ⏭️ Link repetido, ignorando.")
-            return False
+            return chave in self.urls_concluidas
         self.urls_processadas.add(chave)
         self.encontrados += 1
         diretorio = self._diretorio_destino(item)
@@ -506,6 +507,7 @@ class GerenciadorDownloads:
         if completo:
             self.existentes += 1
             self.bytes_existentes += tamanho
+            self.urls_concluidas.add(chave)
             self._sincronizar_contadores()
             print(f"      ⏭️ Já existe: {self._nome_relativo(destino)}")
             return True
@@ -605,6 +607,7 @@ class GerenciadorDownloads:
                     self.baixados += 1
                     self.bytes_baixados += tamanho_final
                 self.bytes_transferidos += transferido
+                self.urls_concluidas.add(chave)
                 for backup in backups_auditoria:
                     backup.unlink(missing_ok=True)
                 self._sincronizar_contadores()

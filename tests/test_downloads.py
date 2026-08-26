@@ -219,6 +219,7 @@ class DownloadsResumeTest(unittest.TestCase):
             with patch("sys.stdout", new_callable=io.StringIO):
                 self.assertTrue(gerenciador.baixar(item()))
             self.assertEqual(gerenciador.existentes, 1)
+            self.assertEqual(len(gerenciador.urls_concluidas), 1)
             self.assertEqual(
                 gerenciador.resumo_dados()["bytes_concluidos"],
                 len(CONTEUDO),

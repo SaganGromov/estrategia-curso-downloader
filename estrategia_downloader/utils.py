@@ -24,6 +24,7 @@ SENSITIVE_QUERY_PARTS = (
     "credential",
     "policy",
     "expires",
+    "expiration",
     "x-amz-",
     "x-goog-",
     "email",

@@ -28,14 +28,19 @@ from .browser import create_edge_driver, diagnostico_browser
 from .collection import (
     CollectionError,
     ensure_course_folder,
+    invalidate_legacy_completions,
     open_collection,
     save_collection,
     update_course_status,
 )
 from .config import (
+    CONTENT_STABILITY_SECONDS,
     DISCOVERY_MAX_ROUNDS,
     DISCOVERY_SCROLL_PAUSE,
     DISCOVERY_STABLE_ROUNDS,
+    INVENTORY_EMPTY_STABLE_OBSERVATIONS,
+    INVENTORY_MAX_PASSES,
+    INVENTORY_STABLE_OBSERVATIONS,
     LOGIN_TIMEOUT,
     LOGIN_URL,
     SELENIUM_SHORT_WAIT,
@@ -61,6 +66,14 @@ from .errors import (
     ConteudoIncompletoError,
     ProcessamentoCursoError,
     mensagem_usuario_para_erro,
+)
+from .integrity import (
+    AUDIT_VERSION,
+    fingerprint,
+    resource_key,
+    safe_resource_record,
+    safe_video_record,
+    save_inventory,
 )
 from .resume import localizar_pasta_retomavel, salvar_estado_execucao
 from .utils import (
@@ -211,6 +224,36 @@ def _painel_carregado(driver) -> bool:
     return bool(
         driver.find_elements(By.CSS_SELECTOR, "a[href*='/app/dashboard/cursos/']")
     )
+
+
+def _preencher_campo_login(driver, elemento, valor: str, descricao: str) -> None:
+    """Preenche e confirma um campo controlado por React sem revelar o valor."""
+
+    elemento.clear()
+    elemento.send_keys(valor)
+    if (elemento.get_attribute("value") or "") == valor:
+        return
+
+    driver.execute_script(
+        """
+        const input = arguments[0];
+        const value = arguments[1];
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype, 'value'
+        ).set;
+        setter.call(input, value);
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        input.dispatchEvent(new Event('change', {bubbles: true}));
+        input.dispatchEvent(new Event('blur', {bubbles: true}));
+        """,
+        elemento,
+        valor,
+    )
+    if (elemento.get_attribute("value") or "") != valor:
+        raise RuntimeError(
+            f"o campo de {descricao} não manteve o valor informado; "
+            "o formulário de login pode ter mudado"
+        )
 
 
 def _executar_selenium(alertas, operacao, descricao: str):
@@ -391,16 +434,14 @@ def do_login(
         )
     )
 
-    email_el.clear()
-    email_el.send_keys(email)
+    _preencher_campo_login(driver, email_el, email, "e-mail")
 
     pwd_el = wait.until(
         EC.visibility_of_element_located(
             (By.CSS_SELECTOR, "input[type='password'], input[name='password']")
         )
     )
-    pwd_el.clear()
-    pwd_el.send_keys(password)
+    _preencher_campo_login(driver, pwd_el, password, "senha")
 
     if submeter_automaticamente:
         # Opção destinada a execuções locais explicitamente autorizadas. O
@@ -532,6 +573,45 @@ def listar_aulas(driver, curso_url: str, alertas=None):
     return aulas
 
 
+def _assinatura_aulas(aulas: list[dict]) -> tuple:
+    return tuple(
+        (
+            urlparse(aula["href"]).path.rstrip("/"),
+            normalizar_texto(aula["nome"]),
+        )
+        for aula in aulas
+    )
+
+
+def listar_aulas_auditadas(driver, curso_url: str, alertas=None):
+    """Aceita a lista de aulas somente após leituras independentes idênticas."""
+
+    assinatura_anterior = None
+    observacoes = 0
+    aulas = []
+    for passagem in range(1, INVENTORY_MAX_PASSES + 1):
+        aulas = listar_aulas(driver, curso_url, alertas)
+        assinatura = _assinatura_aulas(aulas)
+        observacoes = observacoes + 1 if assinatura == assinatura_anterior else 1
+        necessarias = (
+            INVENTORY_STABLE_OBSERVATIONS
+            if aulas
+            else INVENTORY_EMPTY_STABLE_OBSERVATIONS
+        )
+        print(
+            f"   🔁 Inventário de aulas {passagem}/{INVENTORY_MAX_PASSES}: "
+            f"{len(aulas)} aula(s), estabilidade {observacoes}/{necessarias}."
+        )
+        if observacoes >= necessarias:
+            return aulas
+        assinatura_anterior = assinatura
+
+    raise ConteudoIncompletoError(
+        "a lista de aulas não permaneceu idêntica em leituras independentes; "
+        "o curso não pode ser marcado como completo"
+    )
+
+
 def aguardar_conteudo_aula(driver, alertas=None, timeout=SELENIUM_WAIT_TIMEOUT):
     """Aguarda a SPA parar de alterar os blocos relevantes da aula."""
     ultima_assinatura = None
@@ -561,7 +641,7 @@ def aguardar_conteudo_aula(driver, alertas=None, timeout=SELENIUM_WAIT_TIMEOUT):
         return (
             assinatura[0] == "complete"
             and assinatura[1] == 0
-            and (agora - ultima_mudanca >= 0.8)
+            and (agora - ultima_mudanca >= CONTENT_STABILITY_SECONDS)
         )
 
     return _executar_selenium(
@@ -1154,15 +1234,15 @@ def _extensao_material(tipo: str, href: str) -> str:
     return ".bin" if tipo == "material" else ".pdf"
 
 
-def iterar_materiais_da_aula_atual(
+def coletar_materiais_da_aula_atual(
     driver,
     aula_num: int,
     aula_nome: str,
     tipos_permitidos=None,
     alertas=None,
-    registrar_falha=None,
 ):
-    """Entrega PDFs, slides, mapas mentais e outros materiais sem duplicatas."""
+    """Retorna materiais e anúncios ainda sem URL após estabilizar a página."""
+
     vistos = set()
     encontrados = []
     sem_url = set()
@@ -1208,26 +1288,16 @@ def iterar_materiais_da_aula_atual(
         except (NoSuchElementException, StaleElementReferenceException):
             continue
 
-    print(f"   📚 Materiais encontrados: {len(encontrados)}")
-    for descricao in sorted(sem_url):
-        print(f"      ⚠️ Material reconhecido, mas sem URL acessível: {descricao}")
-        if registrar_falha is not None:
-            registrar_falha(
-                f"Aula {aula_num:02d}, material sem link acessível: {descricao}"
-            )
-
     rotulos = {
         "pdf": "PDF",
         "slides": "Slides",
         "mapa_mental": "Mapa Mental",
         "material": "Material",
     }
+    itens = []
     for indice, (elemento, href, tipo) in enumerate(encontrados, start=1):
         titulo = _titulo_material(elemento, href, indice, tipo)
-        print(
-            f"      ✅ {rotulos[tipo]} {indice:02d}: {titulo} -> {sanitizar_url(href)}"
-        )
-        yield {
+        itens.append({
             "tipo": tipo,
             "aula_num": aula_num,
             "aula_nome": safe_filename(aula_nome),
@@ -1235,7 +1305,41 @@ def iterar_materiais_da_aula_atual(
             "titulo": titulo,
             "extensao": _extensao_material(tipo, href),
             "url": href,
-        }
+            "rotulo": rotulos[tipo],
+        })
+    return itens, sem_url
+
+
+def iterar_materiais_da_aula_atual(
+    driver,
+    aula_num: int,
+    aula_nome: str,
+    tipos_permitidos=None,
+    alertas=None,
+    registrar_falha=None,
+):
+    """Entrega PDFs, slides, mapas mentais e outros materiais sem duplicatas."""
+
+    itens, sem_url = coletar_materiais_da_aula_atual(
+        driver,
+        aula_num,
+        aula_nome,
+        tipos_permitidos,
+        alertas,
+    )
+    print(f"   📚 Materiais encontrados: {len(itens)}")
+    for descricao in sorted(sem_url):
+        print(f"      ⚠️ Material reconhecido, mas sem URL acessível: {descricao}")
+        if registrar_falha is not None:
+            registrar_falha(
+                f"Aula {aula_num:02d}, material sem link acessível: {descricao}"
+            )
+    for item in itens:
+        print(
+            f"      ✅ {item.pop('rotulo')} {item['item_num']:02d}: "
+            f"{item['titulo']} -> {sanitizar_url(item['url'])}"
+        )
+        yield item
 
 
 GerenciadorDownloads = GerenciadorDownloadsNovo
@@ -1244,8 +1348,7 @@ GerenciadorDownloads = GerenciadorDownloadsNovo
 def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
     """Registra metadados sem a URL temporária e inicia o download do item."""
     if chave_deduplicacao_url(item["url"]) in gerenciador.urls_processadas:
-        gerenciador.baixar(item)
-        return
+        return gerenciador.baixar(item)
 
     titulo_log = item["titulo"].replace(";", ",")
     arquivo_links.write(
@@ -1253,11 +1356,271 @@ def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
         f"{item['item_num']:02d};{titulo_log};[URL omitida por segurança]\n"
     )
     arquivo_links.flush()
-    gerenciador.baixar(item)
+    return gerenciador.baixar(item)
+
+
+def _inventario_videos_dom(driver, alertas=None):
+    """Lê a identidade estrutural dos vídeos sem abrir links assinados."""
+
+    registros = []
+    for indice, elemento in enumerate(
+        _carregar_videos_da_aula(driver, alertas), start=1
+    ):
+        try:
+            titulo = (elemento.text or f"Vídeo {indice:02d}").strip()
+            identificador = (
+                elemento.get_attribute("data-video-id")
+                or elemento.get_attribute("data-id")
+                or ""
+            )
+        except StaleElementReferenceException:
+            titulo = f"Vídeo {indice:02d}"
+            identificador = ""
+        identidade = (
+            f"posicao={indice}|id={identificador}"
+            if identificador
+            else f"posicao={indice}|titulo={normalizar_texto(titulo)}"
+        )
+        registros.append(
+            {
+                "chave": identidade,
+                "numero": indice,
+                "titulo": safe_filename(titulo),
+            }
+        )
+    return registros
+
+
+def _atualizar_estabilidade(
+    anterior: frozenset | None,
+    atual: frozenset,
+    uniao: set,
+    observacoes: int,
+) -> tuple[frozenset, int]:
+    if set(atual) != uniao:
+        return atual, 0
+    if atual == anterior:
+        return atual, observacoes + 1
+    return atual, 1
+
+
+def _navegar_para_auditoria(driver, alertas, href: str, descricao: str) -> None:
+    if alertas is None:
+        driver.get(href)
+    else:
+        alertas.resolver_pendente(permitir_desconhecido=True)
+        alertas.navegar(href, descricao=descricao)
+    aguardar_conteudo_aula(driver, alertas)
+
+
+def auditar_e_baixar_aula(
+    driver,
+    alertas,
+    arquivo_links,
+    gerenciador: GerenciadorDownloads,
+    *,
+    href: str,
+    aula_num: int,
+    aula_nome: str,
+    tipos_permitidos=None,
+    incluir_videos: bool,
+    permitir_vazio: bool,
+) -> dict:
+    """Reconcilia inventários independentes e baixa a união observada."""
+
+    todos_materiais = set()
+    todos_videos = set()
+    materiais_manifesto = {}
+    videos_manifesto = {}
+    arquivos_manifesto = {}
+    videos_confirmados = set()
+    assinatura_material_anterior = None
+    assinatura_video_anterior = None
+    estabilidade_material = 0
+    estabilidade_video = 0
+    falhas_video = []
+    sem_url_final = set()
+    convergiu = False
+    passagem = 0
+
+    for passagem in range(1, INVENTORY_MAX_PASSES + 1):
+        if passagem > 1:
+            _navegar_para_auditoria(
+                driver,
+                alertas,
+                href,
+                f"reauditar {aula_nome} (passagem {passagem})",
+            )
+            gerenciador.sessao.headers["Referer"] = href
+
+        itens_material, sem_url = coletar_materiais_da_aula_atual(
+            driver,
+            aula_num,
+            aula_nome,
+            tipos_permitidos,
+            alertas,
+        )
+        sem_url_final = set(sem_url)
+        chaves_materiais = {resource_key(item["url"]) for item in itens_material}
+        todos_materiais.update(chaves_materiais)
+        assinatura_material = frozenset(
+            chaves_materiais
+            | {f"sem-url:{fingerprint(descricao)}" for descricao in sem_url}
+        )
+
+        print(
+            f"   📚 Materiais encontrados na passagem {passagem}: "
+            f"{len(itens_material)}"
+        )
+        for descricao in sorted(sem_url):
+            print(
+                "      ↪️ Material anunciado ainda sem URL; será rechecado: "
+                f"{descricao}"
+            )
+        for item_original in itens_material:
+            item = dict(item_original)
+            rotulo = item.pop("rotulo")
+            chave = resource_key(item["url"])
+            materiais_manifesto[chave] = safe_resource_record(item)
+            arquivos_manifesto[chave] = safe_resource_record(item)
+            print(
+                f"      ✅ {rotulo} {item['item_num']:02d}: {item['titulo']} -> "
+                f"{sanitizar_url(item['url'])}"
+            )
+            registrar_e_baixar(item, arquivo_links, gerenciador)
+
+        registros_video = (
+            _inventario_videos_dom(driver, alertas) if incluir_videos else []
+        )
+        chaves_video = {registro["chave"] for registro in registros_video}
+        todos_videos.update(chaves_video)
+        for registro in registros_video:
+            videos_manifesto[registro["chave"]] = safe_video_record(
+                registro["chave"], registro["numero"], registro["titulo"]
+            )
+
+        precisa_resolver_videos = bool(
+            incluir_videos
+            and (
+                passagem == 1
+                or not chaves_video.issubset(videos_confirmados)
+                or falhas_video
+            )
+        )
+        falhas_video = []
+        if precisa_resolver_videos:
+            registros_por_posicao = {
+                registro["numero"]: registro for registro in registros_video
+            }
+            for item in iterar_videos_da_aula_atual(
+                driver,
+                aula_num,
+                aula_nome,
+                alertas,
+                falhas_video.append,
+            ):
+                chave = resource_key(item["url"])
+                arquivos_manifesto[chave] = safe_resource_record(item)
+                concluido = registrar_e_baixar(
+                    item, arquivo_links, gerenciador
+                )
+                registro = registros_por_posicao.get(item["item_num"])
+                if concluido and registro is not None:
+                    videos_confirmados.add(registro["chave"])
+
+        assinatura_video = frozenset(chaves_video)
+        assinatura_material_anterior, estabilidade_material = (
+            _atualizar_estabilidade(
+                assinatura_material_anterior,
+                assinatura_material,
+                todos_materiais,
+                estabilidade_material,
+            )
+        )
+        assinatura_video_anterior, estabilidade_video = _atualizar_estabilidade(
+            assinatura_video_anterior,
+            assinatura_video,
+            todos_videos,
+            estabilidade_video,
+        )
+        alvo_material = (
+            INVENTORY_STABLE_OBSERVATIONS
+            if todos_materiais
+            else INVENTORY_EMPTY_STABLE_OBSERVATIONS
+        )
+        alvo_video = (
+            INVENTORY_STABLE_OBSERVATIONS
+            if todos_videos
+            else INVENTORY_EMPTY_STABLE_OBSERVATIONS
+        )
+        print(
+            f"   🔁 Reconciliação {passagem}/{INVENTORY_MAX_PASSES}: "
+            f"materiais {estabilidade_material}/{alvo_material}; "
+            f"vídeos {estabilidade_video}/{alvo_video}."
+        )
+        if (
+            estabilidade_material >= alvo_material
+            and estabilidade_video >= alvo_video
+            and not falhas_video
+            and todos_videos.issubset(videos_confirmados)
+        ):
+            convergiu = True
+            break
+
+    if not convergiu:
+        gerenciador.registrar_falha_descoberta(
+            f"{aula_nome}: o inventário remoto não convergiu após "
+            f"{INVENTORY_MAX_PASSES} passagens"
+        )
+    for descricao in sorted(sem_url_final):
+        gerenciador.registrar_falha_descoberta(
+            f"Aula {aula_num:02d}, material sem link acessível: {descricao}"
+        )
+    for descricao in falhas_video:
+        gerenciador.registrar_falha_descoberta(descricao)
+
+    videos_sem_arquivo = todos_videos - videos_confirmados
+    if videos_sem_arquivo:
+        gerenciador.registrar_falha_descoberta(
+            f"{aula_nome}: {len(videos_sem_arquivo)} vídeo(s) anunciado(s) "
+            "não tiveram arquivo confirmado"
+        )
+    recursos_esperados = set(arquivos_manifesto)
+    recursos_pendentes = recursos_esperados - gerenciador.urls_concluidas
+    if recursos_pendentes:
+        gerenciador.registrar_falha_descoberta(
+            f"{aula_nome}: {len(recursos_pendentes)} recurso(s) remoto(s) "
+            "não tiveram arquivo local validado"
+        )
+    if not permitir_vazio and not todos_materiais and not todos_videos:
+        gerenciador.registrar_falha_descoberta(
+            f"{aula_nome}: aula numerada vazia; não é seguro afirmar que "
+            "nenhum conteúdo está faltando"
+        )
+
+    return {
+        "nome": safe_filename(aula_nome),
+        "passagens": passagem,
+        "estavel": convergiu,
+        "materiais": sorted(
+            materiais_manifesto.values(), key=lambda item: item["identidade"]
+        ),
+        "videos": sorted(
+            videos_manifesto.values(), key=lambda item: item["identidade"]
+        ),
+        "arquivos": sorted(
+            arquivos_manifesto.values(), key=lambda item: item["identidade"]
+        ),
+    }
 
 
 def garantir_curso_completo(gerenciador: GerenciadorDownloads):
     """Impede que uma execução com qualquer pendência seja anunciada como sucesso."""
+    if gerenciador.encontrados <= 0:
+        raise ConteudoIncompletoError(
+            "nenhum arquivo foi encontrado; sem uma fonte remota que confirme "
+            "um catálogo vazio, o curso não será marcado como completo"
+        )
     if not gerenciador.falhas:
         return
     raise ConteudoIncompletoError(
@@ -1319,9 +1682,16 @@ def executar_conteudo_curso(
         print("⚠️ Não foi possível gravar o marcador inicial deste curso.")
 
     gerenciador = None
+    inventario_aulas = {}
     concluido = False
     try:
-        aulas = listar_aulas(driver, curso_url, alertas)
+        save_inventory(
+            download_dir,
+            curso_id,
+            "em_andamento",
+            inventario_aulas,
+        )
+        aulas = listar_aulas_auditadas(driver, curso_url, alertas)
         gerenciador = GerenciadorDownloads(
             download_dir,
             driver,
@@ -1359,30 +1729,24 @@ def executar_conteudo_curso(
 
             painel.verificar_cancelamento()
             print("\n➡️ Procurando materiais gerais na página do curso...")
-            fontes_gerais = [
-                iterar_materiais_da_aula_atual(
-                    driver,
-                    0,
-                    "Materiais gerais do curso",
-                    tipos_permitidos,
-                    alertas,
-                    gerenciador.registrar_falha_descoberta,
-                )
-            ]
-            if not modo_reduzido:
-                fontes_gerais.append(
-                    iterar_videos_da_aula_atual(
-                        driver,
-                        0,
-                        "Materiais gerais do curso",
-                        alertas,
-                        gerenciador.registrar_falha_descoberta,
-                    )
-                )
-            for fonte in fontes_gerais:
-                for item in fonte:
-                    painel.verificar_cancelamento()
-                    registrar_e_baixar(item, arquivo_links, gerenciador)
+            _navegar_para_auditoria(
+                driver,
+                alertas,
+                curso_url,
+                "abrir materiais gerais para auditoria",
+            )
+            inventario_aulas["geral"] = auditar_e_baixar_aula(
+                driver,
+                alertas,
+                arquivo_links,
+                gerenciador,
+                href=curso_url,
+                aula_num=0,
+                aula_nome="Materiais gerais do curso",
+                tipos_permitidos=tipos_permitidos,
+                incluir_videos=not modo_reduzido,
+                permitir_vazio=True,
+            )
 
             for posicao, aula in enumerate(aulas, start=1):
                 painel.verificar_cancelamento()
@@ -1401,38 +1765,40 @@ def executar_conteudo_curso(
                     f"\n➡️ Aula {posicao}/{len(aulas)}: {nome} "
                     f"(pasta identificada: aula_{num:02d})"
                 )
-                fontes = [
-                    iterar_materiais_da_aula_atual(
-                        driver,
-                        num,
-                        nome,
-                        tipos_permitidos,
-                        alertas,
-                        gerenciador.registrar_falha_descoberta,
-                    )
-                ]
-                if not modo_reduzido:
-                    fontes.append(
-                        iterar_videos_da_aula_atual(
-                            driver,
-                            num,
-                            nome,
-                            alertas,
-                            gerenciador.registrar_falha_descoberta,
-                        )
-                    )
-                for fonte in fontes:
-                    for item in fonte:
-                        painel.verificar_cancelamento()
-                        registrar_e_baixar(item, arquivo_links, gerenciador)
+                chave_aula = f"aula_{num:02d}_posicao_{posicao:02d}"
+                inventario_aulas[chave_aula] = auditar_e_baixar_aula(
+                    driver,
+                    alertas,
+                    arquivo_links,
+                    gerenciador,
+                    href=href,
+                    aula_num=num,
+                    aula_nome=nome,
+                    tipos_permitidos=tipos_permitidos,
+                    incluir_videos=not modo_reduzido,
+                    permitir_vazio=modo_reduzido,
+                )
                 gerenciador.concluir_aula()
 
         print(f"\n✅ Links registrados continuamente em: {out_txt}")
         gerenciador.resumo()
         resumo = gerenciador.resumo_dados()
+        identidades_manifesto = {
+            arquivo["identidade"]
+            for aula in inventario_aulas.values()
+            for arquivo in aula.get("arquivos", [])
+        }
+        resumo.update(
+            {
+                "versao_auditoria": AUDIT_VERSION,
+                "aulas_confirmadas": len(aulas),
+                "recursos_unicos_manifesto": len(identidades_manifesto),
+            }
+        )
         garantir_curso_completo(gerenciador)
+        save_inventory(download_dir, curso_id, "completo", inventario_aulas)
         if not salvar_estado_execucao(download_dir, curso_id, "concluido", resumo):
-            print("⚠️ Não foi possível atualizar o marcador final deste curso.")
+            raise RuntimeError("não foi possível atualizar o marcador final do curso")
         concluido = True
         print(f"\n✅ Curso {curso_id} auditado sem pendências.")
         return resumo
@@ -1444,6 +1810,15 @@ def executar_conteudo_curso(
     finally:
         if not concluido:
             resumo = gerenciador.resumo_dados() if gerenciador is not None else {}
+            try:
+                save_inventory(
+                    download_dir,
+                    curso_id,
+                    "incompleto",
+                    inventario_aulas,
+                )
+            except OSError:
+                print("⚠️ Não foi possível atualizar o inventário deste curso.")
             if not salvar_estado_execucao(
                 download_dir,
                 curso_id,
@@ -1498,6 +1873,13 @@ def executar_colecao_integral(
     colecoes = []
     for selecionada in (pasta_base, *pastas_extras):
         raiz, estado, existente = open_collection(selecionada)
+        invalidos = invalidate_legacy_completions(estado)
+        if invalidos:
+            save_collection(raiz, estado)
+            print(
+                f"⚠️ {len(invalidos)} conclusão(ões) legada(s) foram "
+                "reclassificadas como incompletas e serão reavaliadas."
+            )
         if any(item["raiz"] == raiz for item in colecoes):
             raise CollectionError(f"a coleção foi informada mais de uma vez: {raiz}")
         colecoes.append(

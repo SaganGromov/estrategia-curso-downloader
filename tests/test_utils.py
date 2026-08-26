@@ -71,6 +71,18 @@ class UtilsTest(unittest.TestCase):
             chave_deduplicacao_url(primeira), chave_deduplicacao_url(segunda)
         )
 
+    def test_deduplicacao_ignora_expiration_da_api_de_pdfs(self):
+        primeira = (
+            "https://api.invalid/pdf/10?resourceId=55&expiration=100&signature=a"
+        )
+        segunda = (
+            "https://api.invalid/pdf/10?resourceId=55&expiration=200&signature=b"
+        )
+        self.assertEqual(
+            chave_deduplicacao_url(primeira),
+            chave_deduplicacao_url(segunda),
+        )
+
     def test_texto_de_log_sanitiza_urls(self):
         texto = sanitizar_texto("baixando https://cdn.example/a?token=segredo agora")
         self.assertNotIn("segredo", texto)

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .course_metadata import CourseSummary
+from .integrity import AUDIT_VERSION
 from .utils import sanitizar_texto, slug_nome_curso
 
 COLLECTION_DIRECTORY_NAME = "estrategia-cursos-completos"
@@ -101,6 +102,30 @@ def save_collection(root: Path, state: dict) -> None:
         except OSError:
             pass
         raise CollectionError("não foi possível gravar o marcador da coleção") from error
+
+
+def invalidate_legacy_completions(state: dict) -> list[str]:
+    """Rebaixa conclusões que não possuem o manifesto reconciliado atual."""
+
+    invalidated = []
+    courses = state.get("cursos", {})
+    for course_id, original in list(courses.items()):
+        if not isinstance(original, Mapping) or original.get("status") != "completo":
+            continue
+        summary = original.get("resumo")
+        version = summary.get("versao_auditoria") if isinstance(summary, Mapping) else None
+        if version == AUDIT_VERSION:
+            continue
+        record = dict(original)
+        record["status"] = "incompleto"
+        record["ultima_auditoria"] = _now()
+        record["erro"] = (
+            "conclusão produzida antes da reconciliação exaustiva de inventário; "
+            "uma nova auditoria é obrigatória"
+        )
+        courses[course_id] = record
+        invalidated.append(str(course_id))
+    return invalidated
 
 
 def open_collection(selected_folder: Path) -> tuple[Path, dict, bool]:

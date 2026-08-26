@@ -11,6 +11,8 @@ class LoginTest(unittest.TestCase):
         driver = Mock()
         email = Mock()
         password = Mock()
+        email.get_attribute.return_value = "pessoa@example.test"
+        password.get_attribute.return_value = "segredo"
         button = Mock()
         button.is_displayed.return_value = True
         button.is_enabled.return_value = True
@@ -45,6 +47,24 @@ class LoginTest(unittest.TestCase):
             Keys.ENTER,
             [call.args[0] for call in password.send_keys.call_args_list],
         )
+
+    def test_reaplica_valor_quando_input_react_apaga_send_keys(self):
+        driver = Mock()
+        field = Mock()
+        field.get_attribute.side_effect = ["", "valor"]
+
+        app._preencher_campo_login(driver, field, "valor", "teste")
+
+        field.send_keys.assert_called_once_with("valor")
+        driver.execute_script.assert_called_once()
+
+    def test_falha_se_campo_nao_mantem_valor(self):
+        driver = Mock()
+        field = Mock()
+        field.get_attribute.return_value = ""
+
+        with self.assertRaisesRegex(RuntimeError, "não manteve"):
+            app._preencher_campo_login(driver, field, "valor", "teste")
 
 
 if __name__ == "__main__":
