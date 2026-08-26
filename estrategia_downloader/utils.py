@@ -109,8 +109,8 @@ def sanitizar_url(url: str) -> str:
     try:
         partes = urlsplit(url)
         consulta = [
-            (nome, "REMOVIDO" if parametro_sensivel(nome) else valor)
-            for nome, valor in parse_qsl(partes.query, keep_blank_values=True)
+            (nome, "REMOVIDO")
+            for nome, _valor in parse_qsl(partes.query, keep_blank_values=True)
         ]
         return urlunsplit(
             (partes.scheme, partes.netloc, partes.path, urlencode(consulta), "")

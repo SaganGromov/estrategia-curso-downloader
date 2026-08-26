@@ -38,12 +38,18 @@ class UtilsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             slug_nome_curso("東京")
 
-    def test_url_sanitizada_remove_parametros_sensiveis(self):
-        url = "https://cdn.example/a.pdf?signature=segredo&expires=123&pagina=2#token"
+    def test_url_sanitizada_remove_todos_os_valores_de_query(self):
+        url = (
+            "https://cdn.example/a.pdf?signature=segredo&expires=123&pagina=2&"
+            "clienteId=41099099&expiration=amanha#token"
+        )
         segura = sanitizar_url(url)
         self.assertNotIn("segredo", segura)
         self.assertNotIn("123", segura)
-        self.assertIn("pagina=2", segura)
+        self.assertNotIn("pagina=2", segura)
+        self.assertNotIn("41099099", segura)
+        self.assertNotIn("amanha", segura)
+        self.assertEqual(segura.count("REMOVIDO"), 5)
         self.assertNotIn("#token", segura)
 
     def test_url_sanitizada_remove_identificadores_pessoais(self):
