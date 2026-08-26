@@ -12,15 +12,22 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from estrategia_downloader.collection import (
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from estrategia_downloader.collection import (  # noqa: E402
     ensure_course_folder,
     open_collection,
     save_collection,
     update_course_status,
 )
-from estrategia_downloader.course_metadata import CourseSummary
-from estrategia_downloader.resume import ARQUIVO_ESTADO, salvar_estado_execucao
-from estrategia_downloader.utils import formatar_tamanho, slug_nome_curso
+from estrategia_downloader.course_metadata import CourseSummary  # noqa: E402
+from estrategia_downloader.resume import (  # noqa: E402
+    ARQUIVO_ESTADO,
+    salvar_estado_execucao,
+)
+from estrategia_downloader.utils import formatar_tamanho, slug_nome_curso  # noqa: E402
 
 LEGACY_PATTERN = re.compile(r"^CURSO_ESTRATEGIA_(\d+)_(.+)$")
 TIMESTAMP_PATTERN = re.compile(r"^\d+$")

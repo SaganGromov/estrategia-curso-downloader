@@ -10,15 +10,19 @@ import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from estrategia_downloader.alerts import RecuperadorAlertas
-from estrategia_downloader.app import DASHBOARD_COURSES_URL, do_login
-from estrategia_downloader.browser import create_edge_driver
-from estrategia_downloader.course_metadata import (
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from estrategia_downloader.alerts import RecuperadorAlertas  # noqa: E402
+from estrategia_downloader.app import DASHBOARD_COURSES_URL, do_login  # noqa: E402
+from estrategia_downloader.browser import create_edge_driver  # noqa: E402
+from estrategia_downloader.course_metadata import (  # noqa: E402
     create_course_api_session,
     list_accessible_courses,
 )
-from estrategia_downloader.downloads import criar_sessao_download
-from estrategia_downloader.utils import sanitizar_texto
+from estrategia_downloader.downloads import criar_sessao_download  # noqa: E402
+from estrategia_downloader.utils import sanitizar_texto  # noqa: E402
 
 
 def parse_args():
