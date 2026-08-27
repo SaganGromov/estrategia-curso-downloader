@@ -59,6 +59,7 @@ from .course_metadata import (
 from .course_inventory import (
     CourseInventoryError,
     LessonSnapshot,
+    extract_lesson_snapshot,
     get_course_snapshot,
     get_lesson_snapshot,
 )
@@ -1861,6 +1862,33 @@ def executar_conteudo_curso(
             gerenciador.registrar_falha_descoberta(
                 f"curso {curso_id}: {descricao}"
             )
+        hoje = date.today()
+        aulas_disponiveis = []
+        aulas_futuras = []
+        aulas_bloqueadas = []
+        for aula in aulas:
+            data_futura = (
+                aula.release_date is not None and aula.release_date > hoje
+            )
+            if aula.is_available is False:
+                if data_futura:
+                    aulas_futuras.append(aula)
+                else:
+                    aulas_bloqueadas.append(aula)
+                    gerenciador.registrar_falha_descoberta(
+                        f"{aula.name}: API marcou a aula como indisponível sem "
+                        "uma data futura válida"
+                    )
+            elif aula.is_available is True and data_futura:
+                aulas_bloqueadas.append(aula)
+                gerenciador.registrar_falha_descoberta(
+                    f"{aula.name}: API marcou a aula como disponível, mas sua "
+                    "data de publicação ainda é futura"
+                )
+            elif data_futura:
+                aulas_futuras.append(aula)
+            else:
+                aulas_disponiveis.append(aula)
         chaves_atuais = {
             f"aula_{aula.number:02d}_posicao_{aula.position:02d}"
             for aula in aulas
@@ -1876,55 +1904,6 @@ def executar_conteudo_curso(
             "em_andamento",
             inventario_aulas,
         )
-        liberacoes_futuras = list(curso.future_release_dates) if not aulas else []
-        if liberacoes_futuras:
-            if curso.unexpected_url_fields or curso.unresolved:
-                raise CourseInventoryError(
-                    "o curso futuro contém recursos de API ainda não classificados"
-                )
-            datas = [valor.isoformat() for valor in liberacoes_futuras]
-            resumo = {
-                "encontrados": 0,
-                "baixados": 0,
-                "existentes": 0,
-                "falhas": 0,
-                "falhas_descoberta": 0,
-                "bytes_concluidos": 0,
-                "volume": "0.0 B",
-                "tempo": "00:00",
-                "velocidade_media": "0 B/s",
-                "versao_auditoria": AUDIT_VERSION,
-                "aulas_confirmadas": 0,
-                "recursos_unicos_manifesto": 0,
-                "status_curso": "aguardando_liberacao",
-                "liberacoes_futuras": datas,
-                "proxima_liberacao": datas[0],
-            }
-            save_inventory(
-                download_dir,
-                curso_id,
-                "aguardando_liberacao",
-                inventario_aulas,
-                metadata={
-                    "liberacoes_futuras": datas,
-                    "proxima_liberacao": datas[0],
-                },
-            )
-            if not salvar_estado_execucao(
-                download_dir,
-                curso_id,
-                "aguardando_liberacao",
-                resumo,
-            ):
-                raise RuntimeError(
-                    "não foi possível atualizar o marcador de liberação futura"
-                )
-            concluido = True
-            print(
-                f"\n🗓️ Curso {curso_id} sem conteúdo liberado hoje; "
-                f"próxima liberação anunciada para {datas[0]}."
-            )
-            return resumo
         gerenciador.configurar_total_aulas(len(aulas))
         for aula in aulas:
             gerenciador.preparar_aula(aula.number)
@@ -1951,26 +1930,59 @@ def executar_conteudo_curso(
             arquivo_links.write("aula;tipo;numero;titulo;origem\n")
             arquivo_links.flush()
 
+            ids_futuros = {aula.lesson_id for aula in aulas_futuras}
+            ids_bloqueados = {aula.lesson_id for aula in aulas_bloqueadas}
             for aula in aulas:
+                chave_aula = (
+                    f"aula_{aula.number:02d}_posicao_{aula.position:02d}"
+                )
+                if aula.lesson_id in ids_bloqueados:
+                    inventario_aulas[chave_aula] = {
+                        "nome": safe_filename(aula.name),
+                        "passagens": 0,
+                        "estavel": False,
+                        "modo": "indisponivel_inconsistente",
+                        "materiais": [],
+                        "videos": [],
+                        "arquivos": [],
+                    }
+                    continue
+                aula_futura = aula.lesson_id in ids_futuros
+                if aula_futura and not aula.summary_resources:
+                    inventario_aulas[chave_aula] = {
+                        "nome": safe_filename(aula.name),
+                        "passagens": 0,
+                        "estavel": True,
+                        "modo": "aguardando_liberacao",
+                        "liberacao": aula.release_date.isoformat(),
+                        "materiais": [],
+                        "videos": [],
+                        "arquivos": [],
+                    }
+                    continue
+
                 painel.verificar_cancelamento()
                 gerenciador.iniciar_aula(aula.position)
 
                 painel.atualizar(
                     fase=(
-                        f"Consultando a aula {aula.position} de {len(aulas)} "
+                        f"Inventariando a aula {aula.position} de {len(aulas)} "
                         "pela API"
                     )
                 )
-                snapshot = get_lesson_snapshot(sessao_api, aula)
+                if aula_futura:
+                    snapshot = extract_lesson_snapshot(
+                        {"data": {"id": int(aula.lesson_id), "videos": []}},
+                        aula,
+                    )
+                else:
+                    snapshot = get_lesson_snapshot(sessao_api, aula)
                 gerenciador.sessao.headers["Referer"] = aula.href
 
                 print(
                     f"\n➡️ Aula {aula.position}/{len(aulas)}: {aula.name} "
                     f"(pasta identificada: aula_{aula.number:02d}; "
-                    "1 snapshot da API)"
-                )
-                chave_aula = (
-                    f"aula_{aula.number:02d}_posicao_{aula.position:02d}"
+                    f"{'resumo da API' if aula_futura else '1 snapshot da API'})"
                 )
                 inventario_aulas[chave_aula] = auditar_e_baixar_snapshot_api(
                     snapshot,
@@ -1979,6 +1991,13 @@ def executar_conteudo_curso(
                     tipos_permitidos=tipos_permitidos,
                     incluir_videos=not modo_reduzido,
                 )
+                if aula_futura:
+                    inventario_aulas[chave_aula].update(
+                        {
+                            "modo": "resumo_api_aguardando_liberacao",
+                            "liberacao": aula.release_date.isoformat(),
+                        }
+                    )
                 save_inventory(
                     download_dir,
                     curso_id,
@@ -1998,14 +2017,50 @@ def executar_conteudo_curso(
         resumo.update(
             {
                 "versao_auditoria": AUDIT_VERSION,
-                "aulas_confirmadas": len(aulas),
+                "aulas_confirmadas": len(aulas_disponiveis),
+                "aulas_aguardando_liberacao": len(aulas_futuras),
                 "recursos_unicos_manifesto": len(identidades_manifesto),
             }
         )
         garantir_curso_completo(
             gerenciador,
-            catalogo_remoto_vazio=not aulas,
+            catalogo_remoto_vazio=not identidades_manifesto,
         )
+        datas = [valor.isoformat() for valor in curso.future_release_dates]
+        if datas:
+            resumo.update(
+                {
+                    "status_curso": "aguardando_liberacao",
+                    "liberacoes_futuras": datas,
+                    "proxima_liberacao": datas[0],
+                }
+            )
+            metadata = {
+                "liberacoes_futuras": datas,
+                "proxima_liberacao": datas[0],
+            }
+            save_inventory(
+                download_dir,
+                curso_id,
+                "aguardando_liberacao",
+                inventario_aulas,
+                metadata=metadata,
+            )
+            if not salvar_estado_execucao(
+                download_dir,
+                curso_id,
+                "aguardando_liberacao",
+                resumo,
+            ):
+                raise RuntimeError(
+                    "não foi possível atualizar o marcador de liberação futura"
+                )
+            concluido = True
+            print(
+                f"\n🗓️ Conteúdo atualmente disponível do curso {curso_id} "
+                f"foi auditado; próxima liberação em {datas[0]}."
+            )
+            return resumo
         save_inventory(download_dir, curso_id, "completo", inventario_aulas)
         if not salvar_estado_execucao(download_dir, curso_id, "concluido", resumo):
             raise RuntimeError("não foi possível atualizar o marcador final do curso")

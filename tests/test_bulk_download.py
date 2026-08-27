@@ -452,6 +452,86 @@ class BulkDownloadTest(unittest.TestCase):
                 {1},
             )
 
+    def test_executor_downloads_available_lesson_and_skips_future_detail(self):
+        available = CourseLesson(
+            "20",
+            1,
+            0,
+            "Aula 00",
+            "https://site/aulas/20",
+            is_available=True,
+        )
+        future = CourseLesson(
+            "21",
+            2,
+            1,
+            "Aula 01",
+            "https://site/aulas/21",
+            release_date=date(2099, 9, 1),
+            is_available=False,
+        )
+        course = CourseSnapshot(
+            "100",
+            "Curso Misto",
+            2,
+            (available, future),
+            future_release_dates=(date(2099, 9, 1),),
+        )
+        available_snapshot = extract_lesson_snapshot(
+            {
+                "data": {
+                    "id": 20,
+                    "pdf": "https://cdn.test/20.pdf",
+                    "videos": [],
+                }
+            },
+            available,
+        )
+        panel = PanelFake()
+
+        with TemporaryDirectory() as directory, \
+            patch.object(app, "GerenciadorDownloads", CourseDownloadManagerFake), \
+            patch.object(app, "create_course_api_session", return_value=Mock()), \
+            patch.object(app, "get_course_snapshot", return_value=course), \
+            patch.object(
+                app,
+                "get_lesson_snapshot",
+                return_value=available_snapshot,
+            ) as get_lesson, \
+            patch("sys.stdout"):
+            destination = Path(directory) / "curso-id-100"
+            destination.mkdir()
+
+            result = app.executar_conteudo_curso(
+                DriverFake(),
+                Mock(),
+                panel,
+                "100",
+                "Curso Misto",
+                destination,
+                modo_reduzido=False,
+                auditar_existentes=True,
+            )
+
+            inventory = json.loads(
+                (destination / ".inventario_estrategia.json").read_text("utf-8")
+            )
+            self.assertEqual(get_lesson.call_count, 1)
+            self.assertEqual(get_lesson.call_args.args[1].lesson_id, "20")
+            self.assertEqual(result["status_curso"], "aguardando_liberacao")
+            self.assertEqual(result["aulas_confirmadas"], 1)
+            self.assertEqual(result["aulas_aguardando_liberacao"], 1)
+            self.assertEqual(result["encontrados"], 1)
+            modes = {
+                key: record["modo"]
+                for key, record in inventory["aulas"].items()
+            }
+            self.assertEqual(modes["aula_00_posicao_01"], "api")
+            self.assertEqual(
+                modes["aula_01_posicao_02"],
+                "aguardando_liberacao",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
