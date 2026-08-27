@@ -13,6 +13,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
+from estrategia_downloader.alerts import RecuperadorAlertas  # noqa: E402
 from estrategia_downloader.app import do_login, montar_curso_url  # noqa: E402
 from estrategia_downloader.browser import create_edge_driver  # noqa: E402
 from estrategia_downloader.course_inventory import (  # noqa: E402
@@ -59,10 +60,12 @@ def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="estrategia-api-check-") as directory:
             driver = create_edge_driver(Path(directory))
+            alerts = RecuperadorAlertas(driver)
             do_login(
                 driver,
                 email,
                 password,
+                alertas=alerts,
                 submeter_automaticamente=args.submit_login,
             )
             password = None
