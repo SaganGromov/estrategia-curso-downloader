@@ -29,6 +29,10 @@ from .utils import (
 
 CONTENT_RANGE_RE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+|\*)", re.I)
 CONTENT_RANGE_COMPLETE_RE = re.compile(r"bytes\s+\*/(\d+)", re.I)
+RESOURCE_NUMBER_PREFIX_RE = re.compile(
+    r"^(?:Vídeo|PDF|Slides|Mapa Mental|Material)\s+\d+\s+-\s+",
+    re.IGNORECASE,
+)
 
 
 class RespostaDownloadInvalida(RuntimeError):
@@ -434,6 +438,32 @@ class GerenciadorDownloads:
         return cls._sha256(origem) == cls._sha256(destino)
 
     @staticmethod
+    def _rotulo_logico(caminho: Path) -> str:
+        return RESOURCE_NUMBER_PREFIX_RE.sub("", caminho.stem).casefold()
+
+    def _origem_concluida_equivalente(
+        self,
+        candidato: Path,
+        destino: Path,
+    ) -> Path | None:
+        """Localiza bytes já validados para o mesmo rótulo lógico de recurso."""
+
+        if not candidato.is_file() or candidato.stat().st_size <= 0:
+            return None
+        rotulo = self._rotulo_logico(destino)
+        for origem in self.arquivos_concluidos_por_url.values():
+            if (
+                origem == candidato
+                or not origem.is_file()
+                or origem.suffix.casefold() != destino.suffix.casefold()
+                or self._rotulo_logico(origem) != rotulo
+            ):
+                continue
+            if self._arquivos_iguais(origem, candidato):
+                return origem
+        return None
+
+    @staticmethod
     def _parciais_destino(destino: Path) -> tuple[Path, Path]:
         parcial = destino.with_suffix(destino.suffix + ".part")
         metadados = parcial.with_suffix(parcial.suffix + ".json")
@@ -611,6 +641,28 @@ class GerenciadorDownloads:
         url: str,
     ) -> tuple[bool, int, list[Path]]:
         """Valida o arquivo ou o transforma em parcial sem descartar bytes."""
+
+        candidato_local = None
+        if destino.is_file() and destino.stat().st_size > 0:
+            candidato_local = destino
+        elif temporario.is_file() and temporario.stat().st_size > 0:
+            candidato_local = temporario
+        if candidato_local is not None:
+            origem = self._origem_concluida_equivalente(
+                candidato_local,
+                destino,
+            )
+            if origem is not None:
+                tamanho = candidato_local.stat().st_size
+                if candidato_local == temporario:
+                    temporario.replace(destino)
+                self._limpar_parciais_confirmados(destino)
+                print(
+                    "      🧬 Arquivo local validado por conteúdo idêntico a "
+                    "recurso já confirmado: "
+                    f"{self._nome_relativo(destino)}"
+                )
+                return True, tamanho, []
 
         if not destino.is_file() or destino.stat().st_size <= 0:
             return False, 0, []

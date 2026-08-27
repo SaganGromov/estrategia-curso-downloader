@@ -531,6 +531,77 @@ class DownloadsResumeTest(unittest.TestCase):
             self.assertIn("mesma URL não será repetida", saida.getvalue())
             self.assertIn("depois de 1 tentativa", saida.getvalue())
 
+    def test_promove_parcial_identico_a_recurso_validado_sem_rede(self):
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(
+                pasta,
+                [RespostaFake(CONTEUDO)],
+                auditar_existentes=True,
+            )
+            primeiro = item(
+                "https://arquivos.example/primeiro.pdf",
+                tipo="mapa_mental",
+                titulo="Políticas Econômicas",
+            )
+            segundo = item(
+                "https://arquivos.example/segundo.pdf",
+                tipo="mapa_mental",
+                item_num=2,
+                titulo="Políticas Econômicas",
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(primeiro))
+
+            parcial = (
+                Path(pasta)
+                / "aula_01"
+                / "pdfs"
+                / "Mapa Mental 02 - Políticas Econômicas.pdf.part"
+            )
+            parcial.write_bytes(CONTEUDO)
+            with patch("sys.stdout", new_callable=io.StringIO) as saida:
+                self.assertTrue(gerenciador.baixar(segundo))
+
+            destino = parcial.with_suffix("")
+            self.assertEqual(destino.read_bytes(), CONTEUDO)
+            self.assertFalse(parcial.exists())
+            self.assertEqual(len(gerenciador.sessao.requisicoes), 1)
+            self.assertIn("conteúdo idêntico", saida.getvalue())
+
+    def test_nao_reutiliza_bytes_iguais_com_rotulo_diferente(self):
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(
+                pasta,
+                [RespostaFake(CONTEUDO), RespostaFake(CONTEUDO)],
+                auditar_existentes=True,
+            )
+            primeiro = item(
+                "https://arquivos.example/primeiro.pdf",
+                tipo="mapa_mental",
+                titulo="Políticas Econômicas",
+            )
+            segundo = item(
+                "https://arquivos.example/segundo.pdf",
+                tipo="mapa_mental",
+                item_num=2,
+                titulo="Outro conteúdo",
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(primeiro))
+            parcial = (
+                Path(pasta)
+                / "aula_01"
+                / "pdfs"
+                / "Mapa Mental 02 - Outro conteúdo.pdf.part"
+            )
+            parcial.write_bytes(CONTEUDO)
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(segundo))
+
+            self.assertEqual(len(gerenciador.sessao.requisicoes), 2)
+
     def test_organiza_video_pdf_e_anexo_em_subpastas(self):
         respostas = [
             RespostaFake(
