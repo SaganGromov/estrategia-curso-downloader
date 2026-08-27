@@ -68,6 +68,47 @@ def _json_inventory(payload) -> tuple[Counter, list[str]]:
     return keys, list(dict.fromkeys(structures))
 
 
+def _type_name(value) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    return type(value).__name__
+
+
+def _json_shape(payload, *, max_depth: int = 4) -> list[str]:
+    """Descreve chaves e tipos sem incluir qualquer valor da resposta."""
+
+    lines = []
+
+    def visit(value, path: str, depth: int) -> None:
+        if depth > max_depth:
+            return
+        if isinstance(value, dict):
+            fields = ", ".join(
+                f"{key}:{_type_name(child)}" for key, child in value.items()
+            )
+            lines.append(f"{path}: object{{{fields}}}")
+            for key, child in value.items():
+                if isinstance(child, (dict, list)):
+                    visit(child, f"{path}.{key}", depth + 1)
+        elif isinstance(value, list):
+            lines.append(f"{path}: list[{len(value)}]")
+            if value:
+                visit(value[0], f"{path}[0]", depth + 1)
+
+    visit(payload, "$", 0)
+    return lines
+
+
 def _report(records) -> None:
     candidates = []
     for record in records:
@@ -96,6 +137,8 @@ def _report(records) -> None:
         )
         for structure in structures[:80]:
             print(f"Structure: {structure}")
+        for shape in _json_shape(record.json_body)[:80]:
+            print(f"Schema: {shape}")
 
 
 def parse_args():
