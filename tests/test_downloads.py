@@ -510,6 +510,27 @@ class DownloadsResumeTest(unittest.TestCase):
             self.assertEqual(gerenciador.falhas, 0)
             self.assertEqual(gerenciador.ocorrencias_pendentes(), set())
 
+    def test_resposta_html_nao_repete_a_mesma_url(self):
+        respostas = [
+            RespostaFake(
+                b"<html>login</html>",
+                headers={
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Content-Length": "18",
+                },
+            )
+            for _ in range(3)
+        ]
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(pasta, respostas, tentativas=3)
+
+            with patch("sys.stdout", new_callable=io.StringIO) as saida:
+                self.assertFalse(gerenciador.baixar(item()))
+
+            self.assertEqual(len(gerenciador.sessao.requisicoes), 1)
+            self.assertIn("mesma URL não será repetida", saida.getvalue())
+            self.assertIn("depois de 1 tentativa", saida.getvalue())
+
     def test_organiza_video_pdf_e_anexo_em_subpastas(self):
         respostas = [
             RespostaFake(

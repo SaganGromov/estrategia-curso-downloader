@@ -35,6 +35,10 @@ class RespostaDownloadInvalida(RuntimeError):
     pass
 
 
+class RespostaDownloadNaoRepetivel(RespostaDownloadInvalida):
+    """A resposta é semanticamente errada e não mudará repetindo a mesma URL."""
+
+
 def criar_sessao_download(driver, curso_url: str) -> requests.Session:
     """Reaproveita no requests a autenticação feita pelo usuário no Edge."""
     sessao = requests.Session()
@@ -103,14 +107,18 @@ def _validar_resposta_binaria(resposta, tipo_esperado: str):
     content_type = (resposta.headers.get("Content-Type") or "").lower()
     disposition = (resposta.headers.get("Content-Disposition") or "").lower()
     if "text/html" in content_type and "attachment" not in disposition:
-        raise RespostaDownloadInvalida(
+        raise RespostaDownloadNaoRepetivel(
             "o servidor devolveu uma página HTML em vez do arquivo; o link pode "
             "ter expirado ou a sessão pode não estar autorizada"
         )
     if getattr(resposta, "status_code", 200) == 204:
-        raise RespostaDownloadInvalida("o servidor devolveu uma resposta vazia")
+        raise RespostaDownloadNaoRepetivel(
+            "o servidor devolveu uma resposta vazia"
+        )
     if tipo_esperado == "video" and content_type.startswith("text/"):
-        raise RespostaDownloadInvalida("a resposta recebida não contém um vídeo")
+        raise RespostaDownloadNaoRepetivel(
+            "a resposta recebida não contém um vídeo"
+        )
 
 
 def _ler_metadados(caminho: Path) -> dict:
@@ -710,7 +718,9 @@ class GerenciadorDownloads:
             return True
 
         ultimo_total = 0
+        tentativas_realizadas = 0
         for tentativa in range(1, self.max_tentativas + 1):
+            tentativas_realizadas = tentativa
             self._verificar_cancelamento()
             parcial = temporario.stat().st_size if temporario.exists() else 0
             headers = {}
@@ -834,6 +844,12 @@ class GerenciadorDownloads:
                 self._verificar_cancelamento()
                 self.bytes_transferidos += transferido
                 print(f"      ❌ Erro ao baixar: {sanitizar_texto(str(erro))}")
+                if isinstance(erro, RespostaDownloadNaoRepetivel):
+                    print(
+                        "      ⏹️ Falha não transitória; a mesma URL não será "
+                        "repetida."
+                    )
+                    break
                 if tentativa < self.max_tentativas:
                     time.sleep(RETRY_DELAY_SECONDS)
 
@@ -846,7 +862,11 @@ class GerenciadorDownloads:
             self._falhas_urls[chave] = ultimo_total
             self.bytes_falhos_conhecidos += diferenca
         self._sincronizar_contadores()
-        print(f"      🚩 Falha definitiva depois de {self.max_tentativas} tentativas.")
+        substantivo = "tentativa" if tentativas_realizadas == 1 else "tentativas"
+        print(
+            f"      🚩 Falha definitiva depois de {tentativas_realizadas} "
+            f"{substantivo}."
+        )
         return False
 
     def resumo_dados(self) -> dict:

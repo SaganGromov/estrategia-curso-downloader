@@ -249,6 +249,9 @@ class CourseInventoryTest(unittest.TestCase):
         self.assertIn("detail-720.mp4", detail.videos[0]["url"])
         self.assertEqual(detail.video_identities, (("id=90", 1, "Parte 1"),))
         self.assertEqual(len(detail.materials), 3)
+        self.assertTrue(
+            all("token=refreshed" in item["url"] for item in detail.materials)
+        )
         self.assertEqual(detail.unresolved, ())
         self.assertEqual(detail.unexpected_url_fields, ())
 

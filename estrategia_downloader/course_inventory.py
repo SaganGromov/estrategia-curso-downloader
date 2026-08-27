@@ -599,6 +599,8 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
             fallback,
         )
     for field_name, kind, title, fallback, url in lesson.summary_resources:
+        if field_name.startswith("videos["):
+            continue
         add_material(
             f"$.course.aulas.{field_name}",
             url,
@@ -665,6 +667,17 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
                 f"{material_title} - {title}",
                 fallback,
             )
+
+    for field_name, kind, title, fallback, url in lesson.summary_resources:
+        if not field_name.startswith("videos["):
+            continue
+        add_material(
+            f"$.course.aulas.{field_name}",
+            url,
+            kind,
+            title,
+            fallback,
+        )
 
     for video_id, position, title, url in lesson.summary_videos:
         if video_id not in usable_video_ids:
