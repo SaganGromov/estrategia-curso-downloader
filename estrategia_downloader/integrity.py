@@ -11,7 +11,7 @@ from .utils import chave_deduplicacao_url, safe_filename
 
 INVENTORY_FILE = ".inventario_estrategia.json"
 INVENTORY_SCHEMA = 1
-AUDIT_VERSION = 2
+AUDIT_VERSION = 3
 
 
 def resource_key(url: str) -> str:

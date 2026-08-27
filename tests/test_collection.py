@@ -117,7 +117,7 @@ class CollectionTest(unittest.TestCase):
             self.assertEqual(record["resumo"], {"falhas": 1})
             self.assertNotIn("segredo", record["erro"])
 
-    def test_legacy_completion_is_invalidated_until_version_two_audit(self):
+    def test_completion_is_invalidated_until_current_audit_version(self):
         state = {
             "schema": 1,
             "tipo": "estrategia-cursos-completos",
@@ -127,14 +127,19 @@ class CollectionTest(unittest.TestCase):
                     "status": "completo",
                     "resumo": {"versao_auditoria": 2},
                 },
+                "30": {
+                    "status": "completo",
+                    "resumo": {"versao_auditoria": 3},
+                },
             },
         }
 
         invalidated = invalidate_legacy_completions(state)
 
-        self.assertEqual(invalidated, ["10"])
+        self.assertEqual(invalidated, ["10", "20"])
         self.assertEqual(state["cursos"]["10"]["status"], "incompleto")
-        self.assertEqual(state["cursos"]["20"]["status"], "completo")
+        self.assertEqual(state["cursos"]["20"]["status"], "incompleto")
+        self.assertEqual(state["cursos"]["30"]["status"], "completo")
 
 
 if __name__ == "__main__":

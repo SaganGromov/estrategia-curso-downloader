@@ -1,5 +1,8 @@
+import hashlib
 import json
+import os
 import re
+import shutil
 import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -147,6 +150,12 @@ class GerenciadorDownloads:
         self.nomes_por_diretorio = {}
         self.urls_processadas = set()
         self.urls_concluidas = set()
+        self.destinos_por_ocorrencia = {}
+        self.ocorrencias_por_url = {}
+        self.ocorrencias_concluidas = set()
+        self.arquivos_concluidos_por_url = {}
+        self.ocorrencias_reutilizadas = 0
+        self._falhas_urls = {}
         self.encontrados = 0
         self.baixados = 0
         self.existentes = 0
@@ -372,6 +381,159 @@ class GerenciadorDownloads:
             base = f"{base} ({quantidade})"
         return f"{base}{item['extensao']}"
 
+    @staticmethod
+    def _chave_ocorrencia(item, chave_url: str) -> tuple:
+        """Identifica a posição lógica do recurso dentro de uma aula."""
+
+        return (
+            max(int(item["aula_num"]), 0),
+            str(item["tipo"]),
+            int(item["item_num"]),
+            chave_url,
+        )
+
+    def _destino_ocorrencia(self, item, chave_url: str) -> tuple[tuple, Path]:
+        chave_ocorrencia = self._chave_ocorrencia(item, chave_url)
+        destino = self.destinos_por_ocorrencia.get(chave_ocorrencia)
+        if destino is None:
+            diretorio = self._diretorio_destino(item)
+            destino = diretorio / self._nome_destino(item, diretorio)
+            self.destinos_por_ocorrencia[chave_ocorrencia] = destino
+            self.ocorrencias_por_url.setdefault(chave_url, set()).add(
+                chave_ocorrencia
+            )
+        return chave_ocorrencia, destino
+
+    @staticmethod
+    def _sha256(caminho: Path) -> str:
+        resumo = hashlib.sha256()
+        with caminho.open("rb") as arquivo:
+            for bloco in iter(lambda: arquivo.read(DOWNLOAD_CHUNK_SIZE), b""):
+                resumo.update(bloco)
+        return resumo.hexdigest()
+
+    @classmethod
+    def _arquivos_iguais(cls, origem: Path, destino: Path) -> bool:
+        if not origem.is_file() or not destino.is_file():
+            return False
+        try:
+            if os.path.samefile(origem, destino):
+                return True
+        except OSError:
+            pass
+        if origem.stat().st_size != destino.stat().st_size:
+            return False
+        return cls._sha256(origem) == cls._sha256(destino)
+
+    @staticmethod
+    def _parciais_destino(destino: Path) -> tuple[Path, Path]:
+        parcial = destino.with_suffix(destino.suffix + ".part")
+        metadados = parcial.with_suffix(parcial.suffix + ".json")
+        return parcial, metadados
+
+    def _limpar_parciais_confirmados(self, destino: Path) -> None:
+        for caminho in self._parciais_destino(destino):
+            caminho.unlink(missing_ok=True)
+
+    def _materializar_ocorrencia_repetida(
+        self,
+        chave_url: str,
+        chave_ocorrencia: tuple,
+        destino: Path,
+    ) -> bool:
+        """Garante uma cópia legível por aula sem baixar novamente a URL."""
+
+        origem = self.arquivos_concluidos_por_url.get(chave_url)
+        if origem is None or not origem.is_file():
+            return False
+        if chave_ocorrencia in self.ocorrencias_concluidas:
+            return destino.is_file() and destino.stat().st_size > 0
+
+        try:
+            if origem == destino or self._arquivos_iguais(origem, destino):
+                self._limpar_parciais_confirmados(destino)
+                self.ocorrencias_concluidas.add(chave_ocorrencia)
+                if origem != destino:
+                    self.ocorrencias_reutilizadas += 1
+                return True
+
+            temporario = destino.with_name(destino.name + ".reutilizando")
+            temporario.unlink(missing_ok=True)
+            try:
+                os.link(origem, temporario)
+                modo = "vínculo físico"
+            except OSError:
+                livre = espaco_disponivel(destino.parent)
+                necessario = origem.stat().st_size
+                if livre < necessario + DISK_SAFETY_MARGIN:
+                    raise EspacoInsuficienteError(livre, necessario)
+                shutil.copy2(origem, temporario)
+                modo = "cópia local"
+
+            if not self._arquivos_iguais(origem, temporario):
+                raise RespostaDownloadInvalida(
+                    "a ocorrência local reutilizada não corresponde à origem validada"
+                )
+
+            backup = None
+            if destino.exists():
+                backup = self._caminho_backup(destino)
+                destino.replace(backup)
+            try:
+                temporario.replace(destino)
+            except Exception:
+                if backup is not None and not destino.exists():
+                    backup.replace(destino)
+                raise
+            if backup is not None:
+                backup.unlink(missing_ok=True)
+            self._limpar_parciais_confirmados(destino)
+            self.ocorrencias_concluidas.add(chave_ocorrencia)
+            self.ocorrencias_reutilizadas += 1
+            print(
+                f"      🔗 Ocorrência repetida materializada por {modo}: "
+                f"{self._nome_relativo(destino)}"
+            )
+            return True
+        except EspacoInsuficienteError:
+            raise
+        except (OSError, RespostaDownloadInvalida) as erro:
+            print(
+                "      ⚠️ Não foi possível materializar a ocorrência repetida: "
+                f"{sanitizar_texto(str(erro))}"
+            )
+            return False
+
+    def _concluir_url(
+        self,
+        chave_url: str,
+        chave_ocorrencia: tuple,
+        destino: Path,
+    ) -> None:
+        self.urls_concluidas.add(chave_url)
+        self.arquivos_concluidos_por_url[chave_url] = destino
+        self.ocorrencias_concluidas.add(chave_ocorrencia)
+        tamanho_falho = self._falhas_urls.pop(chave_url, None)
+        if tamanho_falho is not None:
+            self.falhas = max(self.falhas - 1, 0)
+            self.bytes_falhos_conhecidos = max(
+                self.bytes_falhos_conhecidos - tamanho_falho,
+                0,
+            )
+
+        for ocorrencia in self.ocorrencias_por_url.get(chave_url, set()):
+            if ocorrencia in self.ocorrencias_concluidas:
+                continue
+            destino_pendente = self.destinos_por_ocorrencia[ocorrencia]
+            self._materializar_ocorrencia_repetida(
+                chave_url,
+                ocorrencia,
+                destino_pendente,
+            )
+
+    def ocorrencias_pendentes(self) -> set[tuple]:
+        return set(self.destinos_por_ocorrencia) - self.ocorrencias_concluidas
+
     def _nome_relativo(self, caminho: Path) -> str:
         try:
             return str(caminho.relative_to(self.download_dir))
@@ -487,14 +649,18 @@ class GerenciadorDownloads:
         self._verificar_cancelamento()
         url = item["url"]
         chave = chave_deduplicacao_url(url)
-        if chave in self.urls_processadas:
-            print("      ⏭️ Link repetido, ignorando.")
-            return chave in self.urls_concluidas
-        self.urls_processadas.add(chave)
-        self.encontrados += 1
-        diretorio = self._diretorio_destino(item)
-        final_name = self._nome_destino(item, diretorio)
-        destino = diretorio / final_name
+        chave_ocorrencia, destino = self._destino_ocorrencia(item, chave)
+        if chave in self.urls_concluidas:
+            return self._materializar_ocorrencia_repetida(
+                chave,
+                chave_ocorrencia,
+                destino,
+            )
+        if chave not in self.urls_processadas:
+            self.urls_processadas.add(chave)
+            self.encontrados += 1
+        else:
+            print("      🔁 Repetindo recurso ainda não concluído.")
         self._item_atual = self._nome_relativo(destino)
         self._sincronizar_contadores()
         temporario = destino.with_suffix(destino.suffix + ".part")
@@ -507,7 +673,7 @@ class GerenciadorDownloads:
         if completo:
             self.existentes += 1
             self.bytes_existentes += tamanho
-            self.urls_concluidas.add(chave)
+            self._concluir_url(chave, chave_ocorrencia, destino)
             self._sincronizar_contadores()
             print(f"      ⏭️ Já existe: {self._nome_relativo(destino)}")
             return True
@@ -559,6 +725,7 @@ class GerenciadorDownloads:
                         )
                         if extensao != destino.suffix.lower() and offset == 0:
                             destino = destino.with_suffix(extensao)
+                            self.destinos_por_ocorrencia[chave_ocorrencia] = destino
                             temporario = destino.with_suffix(destino.suffix + ".part")
                             metadados_path = temporario.with_suffix(
                                 temporario.suffix + ".json"
@@ -607,7 +774,7 @@ class GerenciadorDownloads:
                     self.baixados += 1
                     self.bytes_baixados += tamanho_final
                 self.bytes_transferidos += transferido
-                self.urls_concluidas.add(chave)
+                self._concluir_url(chave, chave_ocorrencia, destino)
                 for backup in backups_auditoria:
                     backup.unlink(missing_ok=True)
                 self._sincronizar_contadores()
@@ -639,8 +806,14 @@ class GerenciadorDownloads:
                 if tentativa < self.max_tentativas:
                     time.sleep(RETRY_DELAY_SECONDS)
 
-        self.falhas += 1
-        self.bytes_falhos_conhecidos += ultimo_total
+        if chave not in self._falhas_urls:
+            self.falhas += 1
+            self._falhas_urls[chave] = ultimo_total
+            self.bytes_falhos_conhecidos += ultimo_total
+        elif ultimo_total > self._falhas_urls[chave]:
+            diferenca = ultimo_total - self._falhas_urls[chave]
+            self._falhas_urls[chave] = ultimo_total
+            self.bytes_falhos_conhecidos += diferenca
         self._sincronizar_contadores()
         print(f"      🚩 Falha definitiva depois de {self.max_tentativas} tentativas.")
         return False
@@ -659,6 +832,9 @@ class GerenciadorDownloads:
             "existentes": self.existentes,
             "falhas": self.falhas,
             "falhas_descoberta": len(self.falhas_descoberta),
+            "ocorrencias_confirmadas": len(self.ocorrencias_concluidas),
+            "ocorrencias_reutilizadas": self.ocorrencias_reutilizadas,
+            "ocorrencias_pendentes": len(self.ocorrencias_pendentes()),
             "bytes_concluidos": bytes_concluidos,
             "volume": formatar_tamanho(bytes_concluidos),
             "tempo": formatar_duracao(decorrido),
@@ -677,6 +853,15 @@ class GerenciadorDownloads:
         print(f"   Baixados nesta execução: {dados['baixados']}")
         print(f"   Já existentes: {dados['existentes']}")
         print(f"   Falhas: {dados['falhas']}")
+        print(
+            "   Ocorrências físicas confirmadas: "
+            f"{dados['ocorrencias_confirmadas']}"
+        )
+        if dados["ocorrencias_reutilizadas"]:
+            print(
+                "   Ocorrências repetidas materializadas: "
+                f"{dados['ocorrencias_reutilizadas']}"
+            )
         if dados["falhas_descoberta"]:
             print(
                 "   Itens anunciados pelo site sem link: "

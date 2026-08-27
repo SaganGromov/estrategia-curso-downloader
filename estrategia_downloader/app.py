@@ -1459,7 +1459,6 @@ def auditar_e_baixar_aula(
     incluir_videos: bool,
     permitir_vazio: bool,
     exigir_convergencia: bool = True,
-    ids_video_confirmados_curso: set[str] | None = None,
 ) -> dict:
     """Reconcilia inventários independentes e baixa a união observada."""
 
@@ -1477,12 +1476,6 @@ def auditar_e_baixar_aula(
     sem_url_final = set()
     convergiu = False
     passagem = 0
-    cache_ids_video = (
-        ids_video_confirmados_curso
-        if ids_video_confirmados_curso is not None
-        else set()
-    )
-
     for passagem in range(1, INVENTORY_MAX_PASSES + 1):
         if passagem > 1:
             _navegar_para_auditoria(
@@ -1538,9 +1531,6 @@ def auditar_e_baixar_aula(
             videos_manifesto[registro["chave"]] = safe_video_record(
                 registro["chave"], registro["numero"], registro["titulo"]
             )
-            identificador = registro.get("identificador")
-            if identificador and identificador in cache_ids_video:
-                videos_confirmados.add(registro["chave"])
 
         precisa_resolver_videos = bool(
             incluir_videos
@@ -1576,9 +1566,6 @@ def auditar_e_baixar_aula(
                 registro = registros_por_posicao.get(item["item_num"])
                 if concluido and registro is not None:
                     videos_confirmados.add(registro["chave"])
-                    identificador = registro.get("identificador")
-                    if identificador:
-                        cache_ids_video.add(identificador)
 
         assinatura_video = frozenset(chaves_video)
         assinatura_material_anterior, estabilidade_material = (
@@ -1675,6 +1662,12 @@ def auditar_e_baixar_aula(
 
 def garantir_curso_completo(gerenciador: GerenciadorDownloads):
     """Impede que uma execução com qualquer pendência seja anunciada como sucesso."""
+    ocorrencias_pendentes = gerenciador.ocorrencias_pendentes()
+    if ocorrencias_pendentes:
+        raise ConteudoIncompletoError(
+            f"{len(ocorrencias_pendentes)} ocorrência(s) de conteúdo não "
+            "tiveram um arquivo confirmado na pasta da respectiva aula"
+        )
     if gerenciador.encontrados <= 0:
         raise ConteudoIncompletoError(
             "nenhum arquivo foi encontrado; sem uma fonte remota que confirme "
@@ -1821,7 +1814,6 @@ def executar_conteudo_curso(
             auditar_existentes=auditar_existentes,
         )
         gerenciador.configurar_total_aulas(len(aulas))
-        ids_video_confirmados_curso: set[str] = set()
         # ``aula_00`` também abriga os materiais gerais do curso.
         gerenciador.preparar_aula(0)
         for aula in aulas:
@@ -1869,7 +1861,6 @@ def executar_conteudo_curso(
                 incluir_videos=not modo_reduzido,
                 permitir_vazio=True,
                 exigir_convergencia=not bool(aulas),
-                ids_video_confirmados_curso=ids_video_confirmados_curso,
             )
             save_inventory(
                 download_dir,
@@ -1908,7 +1899,6 @@ def executar_conteudo_curso(
                     incluir_videos=not modo_reduzido,
                     permitir_vazio=modo_reduzido,
                     exigir_convergencia=True,
-                    ids_video_confirmados_curso=ids_video_confirmados_curso,
                 )
                 save_inventory(
                     download_dir,

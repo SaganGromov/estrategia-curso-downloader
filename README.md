@@ -180,8 +180,11 @@ temporárias, parâmetros assinados, cookies e tokens nunca são persistidos.
 O arquivo é atualizado atomicamente depois de cada aula e seus checkpoints
 compatíveis são preservados em uma retomada, sempre com estado `em_andamento`
 ou `incompleto` até que o curso inteiro volte a passar pela auditoria.
-Somente um inventário com `versao_auditoria: 2`, convergência das leituras e
-arquivos locais validados sustenta o estado `completo`. Marcadores produzidos
+Somente um inventário com `versao_auditoria: 3`, convergência das leituras e
+uma ocorrência física validada em cada pasta de aula sustenta o estado
+`completo`. Quando duas aulas apontam para o mesmo objeto remoto, ele é baixado
+uma vez e materializado também na segunda aula por vínculo físico (ou cópia
+local quando o sistema de arquivos não permite vínculos). Marcadores produzidos
 por versões anteriores devem ser considerados pendentes até uma nova auditoria.
 
 Cada aula recebe suas próprias pastas `videos` e `pdfs`, inclusive a

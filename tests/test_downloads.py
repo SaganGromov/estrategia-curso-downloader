@@ -378,6 +378,72 @@ class DownloadsResumeTest(unittest.TestCase):
                 self.assertTrue((raiz / "videos").is_dir())
                 self.assertTrue((raiz / "pdfs").is_dir())
 
+    def test_link_repetido_e_materializado_em_cada_aula_sem_novo_get(self):
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(pasta, [RespostaFake(CONTEUDO)])
+            primeira = item(aula_num=1)
+            segunda = item(aula_num=2)
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(primeira))
+                self.assertTrue(gerenciador.baixar(segunda))
+
+            origem = caminho_pdf(pasta)
+            repeticao = (
+                Path(pasta) / "aula_02" / "pdfs" / "PDF 01 - Material.pdf"
+            )
+            self.assertEqual(origem.read_bytes(), CONTEUDO)
+            self.assertEqual(repeticao.read_bytes(), CONTEUDO)
+            self.assertEqual(len(gerenciador.sessao.requisicoes), 1)
+            self.assertEqual(gerenciador.encontrados, 1)
+            self.assertEqual(gerenciador.ocorrencias_reutilizadas, 1)
+            self.assertEqual(gerenciador.ocorrencias_pendentes(), set())
+
+    def test_nova_passagem_da_mesma_ocorrencia_nao_cria_sufixo(self):
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(pasta, [RespostaFake(CONTEUDO)])
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item()))
+                self.assertTrue(gerenciador.baixar(item()))
+
+            arquivos = list((Path(pasta) / "aula_01" / "pdfs").glob("*.pdf"))
+            self.assertEqual(arquivos, [caminho_pdf(pasta)])
+            self.assertEqual(gerenciador.ocorrencias_reutilizadas, 0)
+
+    def test_repeticao_corrompida_e_substituida_pela_origem_validada(self):
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(pasta, [RespostaFake(CONTEUDO)])
+            repeticao = (
+                Path(pasta) / "aula_02" / "pdfs" / "PDF 01 - Material.pdf"
+            )
+            repeticao.parent.mkdir(parents=True)
+            repeticao.write_bytes(b"conteudo incorreto")
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item(aula_num=1)))
+                self.assertTrue(gerenciador.baixar(item(aula_num=2)))
+
+            self.assertEqual(repeticao.read_bytes(), CONTEUDO)
+            self.assertEqual(list(repeticao.parent.glob("*.pre-auditoria-*")), [])
+
+    def test_url_com_falha_pode_ser_recuperada_em_passagem_posterior(self):
+        with TemporaryDirectory() as pasta:
+            gerenciador = self.criar(
+                pasta,
+                [RespostaFake(b"", status=500), RespostaFake(CONTEUDO)],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertFalse(gerenciador.baixar(item()))
+                self.assertTrue(gerenciador.baixar(item()))
+
+            self.assertEqual(caminho_pdf(pasta).read_bytes(), CONTEUDO)
+            self.assertEqual(len(gerenciador.sessao.requisicoes), 2)
+            self.assertEqual(gerenciador.encontrados, 1)
+            self.assertEqual(gerenciador.falhas, 0)
+            self.assertEqual(gerenciador.ocorrencias_pendentes(), set())
+
     def test_organiza_video_pdf_e_anexo_em_subpastas(self):
         respostas = [
             RespostaFake(
