@@ -59,6 +59,7 @@ class CourseLesson:
     number: int
     name: str
     href: str
+    release_date: date | None = None
     summary_resources: tuple[tuple[str, str, str, str, str], ...] = field(
         default=(),
         repr=False,
@@ -150,8 +151,7 @@ _EXPLICIT_RELEASE_RE = re.compile(
 )
 
 
-def _future_release_dates(value, *, today: date | None = None) -> tuple[date, ...]:
-    reference = today or date.today()
+def _release_dates(value) -> tuple[date, ...]:
     found = set()
 
     def visit(item) -> None:
@@ -167,11 +167,15 @@ def _future_release_dates(value, *, today: date | None = None) -> tuple[date, ..
                     parsed = datetime.strptime(raw, "%d/%m/%Y").date()
                 except ValueError:
                     continue
-                if parsed > reference:
-                    found.add(parsed)
+                found.add(parsed)
 
     visit(value)
     return tuple(sorted(found))
+
+
+def _future_release_dates(value, *, today: date | None = None) -> tuple[date, ...]:
+    reference = today or date.today()
+    return tuple(value for value in _release_dates(value) if value > reference)
 
 
 def extract_course_snapshot(
@@ -232,6 +236,12 @@ def extract_course_snapshot(
             name = f"{heading}\n{description}"
         else:
             name = heading or description or f"Aula {position - 1:02d}"
+        release_dates = _release_dates(record)
+        if len(release_dates) > 1:
+            raise CourseInventoryError(
+                f"data.aulas[{position - 1}] contém datas de liberação conflitantes"
+            )
+        release_date = release_dates[0] if release_dates else None
         summary_resources = []
         for (
             field_name,
@@ -255,7 +265,15 @@ def extract_course_snapshot(
                 unresolved.append(
                     f"{resource_path}: valor não contém URL HTTP utilizável"
                 )
-        records.append((lesson_id, position, name, tuple(summary_resources)))
+        records.append(
+            (
+                lesson_id,
+                position,
+                name,
+                release_date,
+                tuple(summary_resources),
+            )
+        )
         number_candidates.append(_lesson_number(name, record))
 
     numbers = _assign_lesson_numbers(number_candidates)
@@ -269,9 +287,16 @@ def extract_course_snapshot(
                 course_id=course_id,
                 lesson_id=lesson_id,
             ),
+            release_date=release_date,
             summary_resources=summary_resources,
         )
-        for (lesson_id, position, name, summary_resources), number in zip(
+        for (
+            lesson_id,
+            position,
+            name,
+            release_date,
+            summary_resources,
+        ), number in zip(
             records,
             numbers,
         )

@@ -7,6 +7,7 @@ import argparse
 import os
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -54,10 +55,21 @@ def check_course(api_session, course_id: str) -> int:
         print(f"Unresolved course field: {description}")
     for path in course.ignored_ui_url_fields:
         print(f"Known course UI URL field: {path}")
+    print(f"Future release dates: {len(course.future_release_dates)}")
 
     total_materials = 0
     total_videos = 0
+    future_lessons = 0
     for lesson in course.lessons:
+        if lesson.release_date is not None and lesson.release_date > date.today():
+            future_lessons += 1
+            print(
+                f"Lesson {lesson.position}/{course.total_lessons}: "
+                f"id={lesson.lesson_id}; folder=aula_{lesson.number:02d}; "
+                f"future_release={lesson.release_date.isoformat()}; "
+                "detail_request=skipped"
+            )
+            continue
         snapshot = get_lesson_snapshot(api_session, lesson)
         total_materials += len(snapshot.materials)
         total_videos += len(snapshot.videos)
@@ -76,7 +88,7 @@ def check_course(api_session, course_id: str) -> int:
         issues.extend(snapshot.unresolved)
         issues.extend(snapshot.unexpected_url_fields)
 
-    print(f"Future release dates: {len(course.future_release_dates)}")
+    print(f"Future lesson details skipped: {future_lessons}")
     print(f"Total materials: {total_materials}")
     print(f"Total videos: {total_videos}")
     print(f"Inventory issues: {len(issues)}")

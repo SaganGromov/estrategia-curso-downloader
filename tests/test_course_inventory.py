@@ -82,6 +82,31 @@ class CourseInventoryTest(unittest.TestCase):
         )
         self.assertEqual(snapshot.future_release_dates, (date(2026, 9, 1),))
 
+    def test_attaches_an_explicit_release_date_to_its_lesson_id(self):
+        snapshot = extract_course_snapshot(
+            {
+                "data": {
+                    "id": 398810,
+                    "nome": "Curso futuro",
+                    "total_aulas": 2,
+                    "aulas": [
+                        {
+                            "id": 40,
+                            "nome": "Aula 00",
+                            "aviso": "Disponível em 01/09/2026",
+                        },
+                        {"id": 41, "nome": "Aula 01"},
+                    ],
+                }
+            },
+            "398810",
+            today=date(2026, 8, 27),
+        )
+
+        self.assertEqual(snapshot.lessons[0].release_date, date(2026, 9, 1))
+        self.assertIsNone(snapshot.lessons[1].release_date)
+        self.assertEqual(snapshot.future_release_dates, (date(2026, 9, 1),))
+
     def test_course_snapshot_reports_unknown_urls_without_their_values(self):
         snapshot = extract_course_snapshot(
             {
