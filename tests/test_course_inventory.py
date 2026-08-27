@@ -199,9 +199,9 @@ class CourseInventoryTest(unittest.TestCase):
                                 {
                                     "id": 90,
                                     "titulo": "Parte 1",
-                                    "audio": "https://cdn.test/audio.mp3?token=secret",
-                                    "slide": "https://cdn.test/slide.pdf?token=secret",
-                                    "thumbnail": "https://cdn.test/thumb.jpg?token=secret",
+                                    "audio": "https://cdn.test/summary-audio.mp3?token=secret",
+                                    "slide": "https://cdn.test/summary-slide.pdf?token=secret",
+                                    "thumbnail": "https://cdn.test/summary-thumb.jpg?token=secret",
                                     "resolucoes": {
                                         "480p": "https://cdn.test/video-480.mp4?token=secret",
                                         "1080p": "https://cdn.test/video-1080.mp4?token=secret",
@@ -232,9 +232,9 @@ class CourseInventoryTest(unittest.TestCase):
                         {
                             "id": 90,
                             "titulo": "Parte 1",
-                            "audio": "https://cdn.test/audio.mp3?token=refreshed",
-                            "slide": "https://cdn.test/slide.pdf?token=refreshed",
-                            "thumbnail": "https://cdn.test/thumb.jpg?token=refreshed",
+                            "audio": "https://cdn.test/detail-audio.mp3?token=refreshed",
+                            "slide": "https://cdn.test/detail-slide.pdf?token=refreshed",
+                            "thumbnail": "https://cdn.test/detail-thumb.jpg?token=refreshed",
                             "resolucoes": {
                                 "720p": "https://cdn.test/detail-720.mp4?token=refreshed"
                             },
@@ -264,7 +264,7 @@ class CourseInventoryTest(unittest.TestCase):
             "https://site/aula",
             summary_resources=(
                 (
-                    "videos[0].audio",
+                    "video_id=90.audio",
                     "material",
                     "Áudio - Parte 1",
                     ".mp3",

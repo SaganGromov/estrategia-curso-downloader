@@ -53,6 +53,10 @@ _VIDEO_RESOURCE_FIELDS = (
     ("audio", "material", "Áudio", ".mp3"),
     ("thumbnail", "material", "Imagem", ".jpg"),
 )
+_SUMMARY_VIDEO_RESOURCE_RE = re.compile(
+    r"^video_id=(\d+)\.([a-z_]+)$",
+    re.IGNORECASE,
+)
 
 
 class CourseInventoryError(CourseMetadataError):
@@ -218,6 +222,13 @@ def _publication_date(value) -> date | None:
         return date.fromisoformat(match.group(1))
     except ValueError:
         return None
+
+
+def _summary_video_resource_slot(value: str) -> tuple[str, str] | None:
+    match = _SUMMARY_VIDEO_RESOURCE_RE.fullmatch(str(value))
+    if not match:
+        return None
+    return match.group(1), match.group(2).casefold()
 
 
 def extract_course_snapshot(
@@ -395,7 +406,7 @@ def extract_course_snapshot(
                     consumed_url_fields.add(resource_path)
                     summary_resources.append(
                         (
-                            f"videos[{video_position - 1}].{field_name}",
+                            f"video_id={video_id}.{field_name}",
                             kind,
                             f"{resource_title} - {video_title}",
                             fallback,
@@ -599,7 +610,7 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
             fallback,
         )
     for field_name, kind, title, fallback, url in lesson.summary_resources:
-        if field_name.startswith("videos["):
+        if _summary_video_resource_slot(field_name) is not None:
             continue
         add_material(
             f"$.course.aulas.{field_name}",
@@ -615,6 +626,7 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
 
     seen_video_ids = set()
     usable_video_ids = set()
+    resolved_video_resource_slots = set()
     pending_video_issues = {}
 
     def add_video(video_id, position, title, url):
@@ -660,16 +672,20 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
             add_video(video_id, position, title, url)
 
         for field, kind, material_title, fallback in _VIDEO_RESOURCE_FIELDS:
+            value = record.get(field)
+            if _http_url(value):
+                resolved_video_resource_slots.add((video_id, field))
             add_material(
                 f"{path}.{field}",
-                record.get(field),
+                value,
                 kind,
                 f"{material_title} - {title}",
                 fallback,
             )
 
     for field_name, kind, title, fallback, url in lesson.summary_resources:
-        if not field_name.startswith("videos["):
+        slot = _summary_video_resource_slot(field_name)
+        if slot is None or slot in resolved_video_resource_slots:
             continue
         add_material(
             f"$.course.aulas.{field_name}",
@@ -678,6 +694,7 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
             title,
             fallback,
         )
+        resolved_video_resource_slots.add(slot)
 
     for video_id, position, title, url in lesson.summary_videos:
         if video_id not in usable_video_ids:

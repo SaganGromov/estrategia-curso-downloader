@@ -543,7 +543,7 @@ class BulkDownloadTest(unittest.TestCase):
             is_available=False,
             summary_resources=(
                 (
-                    "videos[0].audio",
+                    "video_id=90.audio",
                     "material",
                     "Áudio - Parte 1",
                     ".mp3",
