@@ -168,24 +168,28 @@ O marcador `.estrategia_colecao.json` relaciona o ID do painel ao título exato,
 `aguardando_liberacao`. Por isso uma nova execução reconhece a coleção mesmo que
 ela tenha sido interrompida.
 
-Quando um curso ainda não possui conteúdo acessível, mas a página anuncia
+Quando um curso ainda não possui conteúdo acessível, mas a API anuncia
 explicitamente datas futuras, ele recebe `aguardando_liberacao` e a próxima data
 fica no manifesto. Isso não é contado como erro nem como conclusão definitiva:
 uma execução posterior reutiliza a mesma pasta e verifica se as aulas já foram
 liberadas.
 
 O arquivo `.inventario_estrategia.json` registra a versão da auditoria e os
-recursos reconciliados por aula. As identidades são hashes SHA-256; URLs
+recursos enumerados pela API por aula. As identidades são hashes SHA-256; URLs
 temporárias, parâmetros assinados, cookies e tokens nunca são persistidos.
 O arquivo é atualizado atomicamente depois de cada aula e seus checkpoints
 compatíveis são preservados em uma retomada, sempre com estado `em_andamento`
 ou `incompleto` até que o curso inteiro volte a passar pela auditoria.
-Somente um inventário com `versao_auditoria: 3`, convergência das leituras e
-uma ocorrência física validada em cada pasta de aula sustenta o estado
-`completo`. Quando duas aulas apontam para o mesmo objeto remoto, ele é baixado
-uma vez e materializado também na segunda aula por vínculo físico (ou cópia
-local quando o sistema de arquivos não permite vínculos). Marcadores produzidos
-por versões anteriores devem ser considerados pendentes até uma nova auditoria.
+Somente um inventário com `versao_auditoria: 4`, a contagem exata de aulas da
+API, um snapshot de API para cada ID único de aula e uma ocorrência física
+validada em cada pasta sustenta o estado `completo`. Não há recargas repetidas
+da página para tentar provar estabilidade. Se uma resposta trouxer uma URL em
+um campo ainda desconhecido, a execução registra uma pendência e recusa o estado
+`completo`, em vez de ignorar silenciosamente o possível recurso. Quando duas
+aulas apontam para o mesmo objeto remoto, ele é baixado uma vez e materializado
+também na segunda aula por vínculo físico (ou cópia local quando o sistema de
+arquivos não permite vínculos). Marcadores produzidos por versões anteriores
+devem ser considerados pendentes até uma nova auditoria.
 
 Cada aula recebe suas próprias pastas `videos` e `pdfs`, inclusive a
 `aula_00`. PDFs, slides e mapas mentais ficam em `pdfs`. Anexos que não sejam

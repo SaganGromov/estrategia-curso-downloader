@@ -56,7 +56,12 @@ from .course_metadata import (
     get_course_name,
     list_accessible_courses,
 )
-from .course_inventory import LessonSnapshot
+from .course_inventory import (
+    CourseInventoryError,
+    LessonSnapshot,
+    get_course_snapshot,
+    get_lesson_snapshot,
+)
 from .diagnostics import criar_diagnostico
 from .discovery import classificar_material as classificar_material_puro
 from .downloads import (
@@ -1741,7 +1746,11 @@ def auditar_e_baixar_aula(
     }
 
 
-def garantir_curso_completo(gerenciador: GerenciadorDownloads):
+def garantir_curso_completo(
+    gerenciador: GerenciadorDownloads,
+    *,
+    catalogo_remoto_vazio: bool = False,
+):
     """Impede que uma execução com qualquer pendência seja anunciada como sucesso."""
     ocorrencias_pendentes = gerenciador.ocorrencias_pendentes()
     if ocorrencias_pendentes:
@@ -1749,7 +1758,7 @@ def garantir_curso_completo(gerenciador: GerenciadorDownloads):
             f"{len(ocorrencias_pendentes)} ocorrência(s) de conteúdo não "
             "tiveram um arquivo confirmado na pasta da respectiva aula"
         )
-    if gerenciador.encontrados <= 0:
+    if gerenciador.encontrados <= 0 and not catalogo_remoto_vazio:
         raise ConteudoIncompletoError(
             "nenhum arquivo foi encontrado; sem uma fonte remota que confirme "
             "um catálogo vazio, o curso não será marcado como completo"
@@ -1802,7 +1811,7 @@ def executar_conteudo_curso(
     modo_reduzido: bool,
     auditar_existentes: bool = False,
 ) -> dict:
-    """Varre e baixa um curso; sempre persiste seu estado de retomada."""
+    """Baixa o inventário finito declarado pelas APIs de curso e aula."""
 
     curso_url = montar_curso_url(curso_id)
     configurar_destino_edge(driver, download_dir)
@@ -1815,6 +1824,7 @@ def executar_conteudo_curso(
         print("⚠️ Não foi possível gravar o marcador inicial deste curso.")
 
     gerenciador = None
+    sessao_api = None
     inventario_aulas = load_inventory_lessons(download_dir, curso_id)
     concluido = False
     try:
@@ -1824,10 +1834,28 @@ def executar_conteudo_curso(
             "em_andamento",
             inventario_aulas,
         )
-        aulas = listar_aulas_auditadas(driver, curso_url, alertas)
-        chaves_atuais = {"geral"} | {
-            f"aula_{aula['num']:02d}_posicao_{posicao:02d}"
-            for posicao, aula in enumerate(aulas, start=1)
+        gerenciador = GerenciadorDownloads(
+            download_dir,
+            driver,
+            curso_url,
+            painel=painel,
+            auditar_existentes=auditar_existentes,
+        )
+        sessao_api = create_course_api_session(gerenciador.sessao)
+        curso = get_course_snapshot(sessao_api, curso_id)
+        if curso.title != nome_curso:
+            raise CourseInventoryError(
+                "o título canônico do curso diverge do título usado para "
+                "identificar sua pasta"
+            )
+        aulas = list(curso.lessons)
+        print(
+            f"📚 A API confirmou {curso.total_lessons} aula(s) única(s) "
+            f"para o curso {curso_id}."
+        )
+        chaves_atuais = {
+            f"aula_{aula.number:02d}_posicao_{aula.position:02d}"
+            for aula in aulas
         }
         inventario_aulas = {
             chave: valor
@@ -1840,9 +1868,7 @@ def executar_conteudo_curso(
             "em_andamento",
             inventario_aulas,
         )
-        liberacoes_futuras = (
-            detectar_liberacoes_futuras(driver) if not aulas else []
-        )
+        liberacoes_futuras = list(curso.future_release_dates) if not aulas else []
         if liberacoes_futuras:
             datas = [valor.isoformat() for valor in liberacoes_futuras]
             resumo = {
@@ -1887,18 +1913,9 @@ def executar_conteudo_curso(
                 f"próxima liberação anunciada para {datas[0]}."
             )
             return resumo
-        gerenciador = GerenciadorDownloads(
-            download_dir,
-            driver,
-            curso_url,
-            painel=painel,
-            auditar_existentes=auditar_existentes,
-        )
         gerenciador.configurar_total_aulas(len(aulas))
-        # ``aula_00`` também abriga os materiais gerais do curso.
-        gerenciador.preparar_aula(0)
         for aula in aulas:
-            gerenciador.preparar_aula(aula["num"])
+            gerenciador.preparar_aula(aula.number)
         out_txt = download_dir / "links_estrategia_conteudo.txt"
 
         tipos_permitidos = (
@@ -1912,7 +1929,7 @@ def executar_conteudo_curso(
         else:
             print(
                 "\n⬇️ Modo completo: vídeos, PDFs, slides, mapas mentais e "
-                "demais materiais serão procurados e baixados."
+                "demais materiais serão enumerados pela API e baixados."
             )
         if auditar_existentes:
             print("   🔎 Arquivos já presentes também terão o tamanho auditado.")
@@ -1922,64 +1939,33 @@ def executar_conteudo_curso(
             arquivo_links.write("aula;tipo;numero;titulo;origem\n")
             arquivo_links.flush()
 
-            painel.verificar_cancelamento()
-            print("\n➡️ Procurando materiais gerais na página do curso...")
-            _navegar_para_auditoria(
-                driver,
-                alertas,
-                curso_url,
-                "abrir materiais gerais para auditoria",
-            )
-            inventario_aulas["geral"] = auditar_e_baixar_aula(
-                driver,
-                alertas,
-                arquivo_links,
-                gerenciador,
-                href=curso_url,
-                aula_num=0,
-                aula_nome="Materiais gerais do curso",
-                tipos_permitidos=tipos_permitidos,
-                incluir_videos=not modo_reduzido,
-                permitir_vazio=True,
-                exigir_convergencia=not bool(aulas),
-            )
-            save_inventory(
-                download_dir,
-                curso_id,
-                "em_andamento",
-                inventario_aulas,
-            )
-
-            for posicao, aula in enumerate(aulas, start=1):
+            for aula in aulas:
                 painel.verificar_cancelamento()
-                gerenciador.iniciar_aula(posicao)
-                num = aula["num"]
-                nome = aula["nome"]
-                href = aula["href"]
+                gerenciador.iniciar_aula(aula.position)
 
-                painel.atualizar(fase=f"Abrindo a aula {posicao} de {len(aulas)}")
-                alertas.resolver_pendente(permitir_desconhecido=True)
-                alertas.navegar(href, descricao=f"abrir a aula {posicao}")
-                aguardar_conteudo_aula(driver, alertas)
-                gerenciador.sessao.headers["Referer"] = href
+                painel.atualizar(
+                    fase=(
+                        f"Consultando a aula {aula.position} de {len(aulas)} "
+                        "pela API"
+                    )
+                )
+                snapshot = get_lesson_snapshot(sessao_api, aula)
+                gerenciador.sessao.headers["Referer"] = aula.href
 
                 print(
-                    f"\n➡️ Aula {posicao}/{len(aulas)}: {nome} "
-                    f"(pasta identificada: aula_{num:02d})"
+                    f"\n➡️ Aula {aula.position}/{len(aulas)}: {aula.name} "
+                    f"(pasta identificada: aula_{aula.number:02d}; "
+                    "1 snapshot da API)"
                 )
-                chave_aula = f"aula_{num:02d}_posicao_{posicao:02d}"
-                inventario_aulas[chave_aula] = auditar_e_baixar_aula(
-                    driver,
-                    alertas,
+                chave_aula = (
+                    f"aula_{aula.number:02d}_posicao_{aula.position:02d}"
+                )
+                inventario_aulas[chave_aula] = auditar_e_baixar_snapshot_api(
+                    snapshot,
                     arquivo_links,
                     gerenciador,
-                    href=href,
-                    aula_num=num,
-                    aula_nome=nome,
                     tipos_permitidos=tipos_permitidos,
                     incluir_videos=not modo_reduzido,
-                    permitir_vazio=modo_reduzido,
-                    exigir_convergencia=True,
                 )
                 save_inventory(
                     download_dir,
@@ -2004,7 +1990,10 @@ def executar_conteudo_curso(
                 "recursos_unicos_manifesto": len(identidades_manifesto),
             }
         )
-        garantir_curso_completo(gerenciador)
+        garantir_curso_completo(
+            gerenciador,
+            catalogo_remoto_vazio=not aulas,
+        )
         save_inventory(download_dir, curso_id, "completo", inventario_aulas)
         if not salvar_estado_execucao(download_dir, curso_id, "concluido", resumo):
             raise RuntimeError("não foi possível atualizar o marcador final do curso")
@@ -2035,6 +2024,8 @@ def executar_conteudo_curso(
                 resumo,
             ):
                 print("⚠️ Não foi possível atualizar o marcador de retomada.")
+        if sessao_api is not None:
+            sessao_api.close()
         if gerenciador is not None:
             gerenciador.sessao.close()
 

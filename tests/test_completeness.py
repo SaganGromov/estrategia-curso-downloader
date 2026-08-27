@@ -274,6 +274,15 @@ class CompletenessTest(unittest.TestCase):
                 )
             )
 
+        app.garantir_curso_completo(
+            SimpleNamespace(
+                falhas=0,
+                encontrados=0,
+                ocorrencias_pendentes=lambda: set(),
+            ),
+            catalogo_remoto_vazio=True,
+        )
+
     def test_pdf_tardio_e_incluido_antes_de_confirmar_a_aula(self):
         pdf = {
             "tipo": "pdf",

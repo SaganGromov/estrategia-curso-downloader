@@ -5,12 +5,19 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
+import requests
+
 from estrategia_downloader import app
 from estrategia_downloader.collection import (
     COLLECTION_DIRECTORY_NAME,
     COLLECTION_MARKER,
 )
 from estrategia_downloader.course_metadata import CourseSummary
+from estrategia_downloader.course_inventory import (
+    CourseLesson,
+    CourseSnapshot,
+    extract_lesson_snapshot,
+)
 from estrategia_downloader.errors import (
     ColecaoIncompletaError,
     ProcessamentoCursoError,
@@ -55,6 +62,65 @@ class DriverFake:
 
     def execute_cdp_cmd(self, command, parameters):
         self.commands.append((command, parameters))
+
+    def execute_script(self, _script):
+        return "Test User Agent"
+
+    def get_cookies(self):
+        return []
+
+
+class CourseDownloadManagerFake:
+    def __init__(self, *_args, **_kwargs):
+        self.sessao = requests.Session()
+        self.urls_processadas = set()
+        self.urls_concluidas = set()
+        self.encontrados = 0
+        self.baixados = 0
+        self.existentes = 0
+        self.falhas = 0
+        self.falhas_descoberta = []
+
+    def configurar_total_aulas(self, _total):
+        return None
+
+    def preparar_aula(self, _number):
+        return None
+
+    def iniciar_aula(self, _position):
+        return None
+
+    def concluir_aula(self):
+        return None
+
+    def baixar(self, item):
+        key = app.resource_key(item["url"])
+        if key not in self.urls_processadas:
+            self.urls_processadas.add(key)
+            self.encontrados += 1
+            self.baixados += 1
+        self.urls_concluidas.add(key)
+        return True
+
+    def registrar_falha_descoberta(self, description):
+        if description not in self.falhas_descoberta:
+            self.falhas_descoberta.append(description)
+            self.falhas += 1
+
+    def ocorrencias_pendentes(self):
+        return set()
+
+    def resumo(self):
+        return None
+
+    def resumo_dados(self):
+        return summary(
+            found=self.encontrados,
+            downloaded=self.baixados,
+            existing=self.existentes,
+            failures=self.falhas,
+            size=self.encontrados,
+        )
 
 
 class BulkDownloadTest(unittest.TestCase):
@@ -240,7 +306,12 @@ class BulkDownloadTest(unittest.TestCase):
     def test_course_state_is_incomplete_when_discovery_fails_before_downloads(self):
         panel = PanelFake()
         with TemporaryDirectory() as directory, \
-            patch.object(app, "listar_aulas", side_effect=RuntimeError("sem aulas")), \
+            patch.object(app, "create_course_api_session", return_value=Mock()), \
+            patch.object(
+                app,
+                "get_course_snapshot",
+                side_effect=RuntimeError("sem inventário da API"),
+            ), \
             patch("sys.stdout"):
             destination = Path(directory) / "curso-id-100"
             destination.mkdir()
@@ -263,11 +334,16 @@ class BulkDownloadTest(unittest.TestCase):
     def test_future_only_course_gets_a_resumable_scheduled_marker(self):
         panel = PanelFake()
         driver = DriverFake()
-        driver.execute_script = Mock(
-            return_value="Aula 00 — Disponível em 01/09/2099"
+        scheduled = CourseSnapshot(
+            course_id="100",
+            title="Curso Futuro",
+            total_lessons=0,
+            lessons=(),
+            future_release_dates=(date(2099, 9, 1),),
         )
         with TemporaryDirectory() as directory, \
-            patch.object(app, "listar_aulas_auditadas", return_value=[]), \
+            patch.object(app, "create_course_api_session", return_value=Mock()), \
+            patch.object(app, "get_course_snapshot", return_value=scheduled), \
             patch("sys.stdout"):
             destination = Path(directory) / "curso-id-100"
             destination.mkdir()
@@ -293,6 +369,87 @@ class BulkDownloadTest(unittest.TestCase):
             self.assertEqual(
                 inventory["metadados"]["proxima_liberacao"],
                 "2099-09-01",
+            )
+
+    def test_executor_uses_one_course_snapshot_and_one_call_per_lesson(self):
+        lessons = (
+            CourseLesson("20", 1, 0, "Aula 00", "https://site/aulas/20"),
+            CourseLesson("21", 2, 1, "Aula 01", "https://site/aulas/21"),
+        )
+        course = CourseSnapshot("100", "Curso", 2, lessons)
+        lesson_snapshots = [
+            extract_lesson_snapshot(
+                {
+                    "data": {
+                        "id": int(lesson.lesson_id),
+                        "pdf": f"https://cdn.test/{lesson.lesson_id}.pdf",
+                        "videos": [],
+                    }
+                },
+                lesson,
+            )
+            for lesson in lessons
+        ]
+        panel = PanelFake()
+        api_session = Mock()
+
+        with TemporaryDirectory() as directory, \
+            patch.object(app, "GerenciadorDownloads", CourseDownloadManagerFake), \
+            patch.object(
+                app,
+                "create_course_api_session",
+                return_value=api_session,
+            ), \
+            patch.object(app, "get_course_snapshot", return_value=course) as get_course, \
+            patch.object(
+                app,
+                "get_lesson_snapshot",
+                side_effect=lesson_snapshots,
+            ) as get_lesson, \
+            patch.object(
+                app,
+                "listar_aulas_auditadas",
+                side_effect=AssertionError("DOM não deve ser consultado"),
+            ) as dom_lessons, \
+            patch.object(
+                app,
+                "auditar_e_baixar_aula",
+                side_effect=AssertionError("DOM não deve ser auditado"),
+            ) as dom_audit, \
+            patch("sys.stdout"):
+            destination = Path(directory) / "curso-id-100"
+            destination.mkdir()
+
+            result = app.executar_conteudo_curso(
+                DriverFake(),
+                Mock(),
+                panel,
+                "100",
+                "Curso",
+                destination,
+                modo_reduzido=False,
+                auditar_existentes=True,
+            )
+
+            inventory = json.loads(
+                (destination / ".inventario_estrategia.json").read_text("utf-8")
+            )
+            self.assertEqual(get_course.call_count, 1)
+            self.assertEqual(get_lesson.call_count, 2)
+            self.assertEqual(
+                [call.args[1].lesson_id for call in get_lesson.call_args_list],
+                ["20", "21"],
+            )
+            dom_lessons.assert_not_called()
+            dom_audit.assert_not_called()
+            self.assertEqual(result["encontrados"], 2)
+            self.assertEqual(
+                {record["modo"] for record in inventory["aulas"].values()},
+                {"api"},
+            )
+            self.assertEqual(
+                {record["passagens"] for record in inventory["aulas"].values()},
+                {1},
             )
 
 

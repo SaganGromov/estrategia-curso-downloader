@@ -131,15 +131,20 @@ class CollectionTest(unittest.TestCase):
                     "status": "completo",
                     "resumo": {"versao_auditoria": 3},
                 },
+                "40": {
+                    "status": "completo",
+                    "resumo": {"versao_auditoria": 4},
+                },
             },
         }
 
         invalidated = invalidate_legacy_completions(state)
 
-        self.assertEqual(invalidated, ["10", "20"])
+        self.assertEqual(invalidated, ["10", "20", "30"])
         self.assertEqual(state["cursos"]["10"]["status"], "incompleto")
         self.assertEqual(state["cursos"]["20"]["status"], "incompleto")
-        self.assertEqual(state["cursos"]["30"]["status"], "completo")
+        self.assertEqual(state["cursos"]["30"]["status"], "incompleto")
+        self.assertEqual(state["cursos"]["40"]["status"], "completo")
 
 
 if __name__ == "__main__":
