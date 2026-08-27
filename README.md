@@ -215,6 +215,44 @@ Falhas transitórias retomam o `.part` com HTTP `Range` quando o servidor
 permite. Se o servidor ignorar a faixa, o arquivo é reiniciado com segurança;
 uma resposta inconsistente nunca é anexada cegamente.
 
+### Certificação offline, sem nova varredura do curso
+
+Depois que o inventário v4 chega a `completo`, o resultado pode ser certificado
+sem reabrir o Edge, chamar a API ou repetir downloads:
+
+```bash
+python3 tools/verify_course_download.py \
+  /mnt/f/estrategia-cursos-completos/bacen-lingua-portuguesa-id-327527
+```
+
+O verificador percorre a árvore local uma vez, reconstrói o nome esperado de
+cada ocorrência do manifesto, rejeita lacunas mesmo na presença de arquivos
+legados extras, rejeita `.part` e outros transitórios, chama `pdfinfo`, `ffprobe`
+ou `identify` para formatos conhecidos e calcula SHA-256. Hard links do mesmo
+conteúdo são lidos uma única vez. Somente uma verificação aprovada grava
+`.certificado_integridade_estrategia.json`; o certificado contém caminhos
+relativos, tamanhos e hashes, nunca URLs, cookies ou tokens.
+
+`pdfinfo`, `ffprobe` e `identify` são validadores opcionais externos e estão
+disponíveis no WSL usado no desenvolvimento. Se algum deles não estiver no
+`PATH`, a verificação profunda falha explicitamente. `--no-structure` dispensa
+esses executáveis e ainda permite um certificado baseado em manifesto,
+tamanho e SHA-256, com `estrutura_verificada: false` registrado no resultado.
+
+Para uma conferência rápida do mapeamento manifesto-arquivos, sem calcular
+hashes nem criar certificado:
+
+```powershell
+py .\tools\verify_course_download.py `
+  "F:\estrategia-cursos-completos\bacen-lingua-portuguesa-id-327527" `
+  --no-hash --no-structure
+```
+
+Essa certificação verifica o snapshot já registrado. Uma execução futura
+ainda consulta uma vez a API para detectar conteúdo novo que a plataforma tenha
+publicado depois do snapshot, mas reutiliza tudo que o manifesto local já
+confirmou.
+
 ## Instalação automática e segurança
 
 O bootstrap usa uma versão de Python explicitamente fixada em `bootstrap-config.json` e dependências testadas em `requirements.lock.txt`.
