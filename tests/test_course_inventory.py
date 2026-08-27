@@ -82,6 +82,26 @@ class CourseInventoryTest(unittest.TestCase):
         )
         self.assertEqual(snapshot.future_release_dates, (date(2026, 9, 1),))
 
+    def test_course_snapshot_reports_unknown_urls_without_their_values(self):
+        snapshot = extract_course_snapshot(
+            {
+                "data": {
+                    "id": 100,
+                    "nome": "Curso",
+                    "total_aulas": 0,
+                    "aulas": [],
+                    "new_resource": "https://cdn.test/file?token=secret",
+                }
+            },
+            "100",
+        )
+
+        self.assertEqual(
+            snapshot.unexpected_url_fields,
+            ("$.data.new_resource",),
+        )
+        self.assertNotIn("secret", repr(snapshot))
+
     def test_lesson_snapshot_selects_highest_video_and_all_known_files(self):
         lesson = CourseLesson("3163819", 1, 5, "Aula 05", "https://site/aula")
         shared_slide = "https://cdn.test/slide.pdf?expiration=1"

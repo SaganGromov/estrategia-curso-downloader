@@ -1853,6 +1853,10 @@ def executar_conteudo_curso(
             f"📚 A API confirmou {curso.total_lessons} aula(s) única(s) "
             f"para o curso {curso_id}."
         )
+        for caminho in curso.unexpected_url_fields:
+            gerenciador.registrar_falha_descoberta(
+                f"curso {curso_id}: campo de URL não classificado em {caminho}"
+            )
         chaves_atuais = {
             f"aula_{aula.number:02d}_posicao_{aula.position:02d}"
             for aula in aulas

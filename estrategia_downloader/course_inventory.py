@@ -48,6 +48,7 @@ class CourseSnapshot:
     total_lessons: int
     lessons: tuple[CourseLesson, ...]
     future_release_dates: tuple[date, ...] = ()
+    unexpected_url_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +226,9 @@ def extract_course_snapshot(
         total_lessons=total,
         lessons=lessons,
         future_release_dates=_future_release_dates(data, today=today),
+        unexpected_url_fields=tuple(
+            sorted(path for path, _url in _iter_url_fields(data))
+        ),
     )
 
 
