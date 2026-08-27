@@ -77,6 +77,7 @@ class CourseSnapshot:
     unexpected_url_fields: tuple[str, ...] = ()
     unresolved: tuple[str, ...] = ()
     ignored_ui_url_fields: tuple[str, ...] = ()
+    lesson_summary_schema: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +112,22 @@ def _text(record: Mapping, *names: str) -> str:
         if isinstance(value, str) and value.strip():
             return " ".join(value.split())
     return ""
+
+
+def _type_name(value) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    return type(value).__name__
 
 
 def _lesson_number(name: str, record: Mapping) -> int | None:
@@ -306,7 +323,8 @@ def extract_course_snapshot(
         sorted(
             path
             for path, _url in all_url_fields
-            if re.fullmatch(r"\$\.data\.professores\[\d+\]\.imagem", path)
+            if path == "$.data.icone"
+            or re.fullmatch(r"\$\.data\.professores\[\d+\]\.imagem", path)
         )
     )
     ignored_paths = set(ignored_ui_url_fields)
@@ -325,6 +343,15 @@ def extract_course_snapshot(
         ),
         unresolved=tuple(unresolved),
         ignored_ui_url_fields=ignored_ui_url_fields,
+        lesson_summary_schema=tuple(
+            sorted(
+                {
+                    f"{key}:{_type_name(value)}"
+                    for record in raw_lessons
+                    for key, value in record.items()
+                }
+            )
+        ),
     )
 
 

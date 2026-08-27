@@ -106,6 +106,8 @@ class CourseInventoryTest(unittest.TestCase):
         self.assertEqual(snapshot.lessons[0].release_date, date(2026, 9, 1))
         self.assertIsNone(snapshot.lessons[1].release_date)
         self.assertEqual(snapshot.future_release_dates, (date(2026, 9, 1),))
+        self.assertIn("aviso:string", snapshot.lesson_summary_schema)
+        self.assertIn("id:number", snapshot.lesson_summary_schema)
 
     def test_course_snapshot_reports_unknown_urls_without_their_values(self):
         snapshot = extract_course_snapshot(
@@ -116,6 +118,7 @@ class CourseInventoryTest(unittest.TestCase):
                     "total_aulas": 0,
                     "aulas": [],
                     "new_resource": "https://cdn.test/file?token=secret",
+                    "icone": "https://cdn.test/icon.jpg",
                 }
             },
             "100",
@@ -125,6 +128,7 @@ class CourseInventoryTest(unittest.TestCase):
             snapshot.unexpected_url_fields,
             ("$.data.new_resource",),
         )
+        self.assertEqual(snapshot.ignored_ui_url_fields, ("$.data.icone",))
         self.assertNotIn("secret", repr(snapshot))
 
     def test_reconciles_summary_materials_and_classifies_professor_portrait(self):

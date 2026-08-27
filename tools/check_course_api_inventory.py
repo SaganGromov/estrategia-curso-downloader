@@ -37,10 +37,18 @@ def parse_args():
     )
     parser.add_argument("course_id", nargs="+")
     parser.add_argument("--submit-login", action="store_true")
+    parser.add_argument("--course-only", action="store_true")
+    parser.add_argument("--summary-schema", action="store_true")
     return parser.parse_args()
 
 
-def check_course(api_session, course_id: str) -> int:
+def check_course(
+    api_session,
+    course_id: str,
+    *,
+    include_details: bool = True,
+    show_summary_schema: bool = False,
+) -> int:
     course = get_course_snapshot(api_session, course_id)
 
     print(f"Course ID: {course.course_id}")
@@ -55,7 +63,14 @@ def check_course(api_session, course_id: str) -> int:
         print(f"Unresolved course field: {description}")
     for path in course.ignored_ui_url_fields:
         print(f"Known course UI URL field: {path}")
+    if show_summary_schema:
+        print("Lesson summary schema: " + ", ".join(course.lesson_summary_schema))
     print(f"Future release dates: {len(course.future_release_dates)}")
+
+    if not include_details:
+        print("Lesson detail requests: skipped by --course-only")
+        print(f"Inventory issues: {len(issues)}")
+        return len(issues)
 
     total_materials = 0
     total_videos = 0
@@ -136,7 +151,12 @@ def main() -> int:
             for index, course_id in enumerate(args.course_id):
                 if index:
                     print()
-                issue_count += check_course(api_session, course_id)
+                issue_count += check_course(
+                    api_session,
+                    course_id,
+                    include_details=not args.course_only,
+                    show_summary_schema=args.summary_schema,
+                )
             return 1 if issue_count else 0
     except Exception as error:
         message = sanitizar_texto(str(error)).split("Stacktrace:", 1)[0].strip()
