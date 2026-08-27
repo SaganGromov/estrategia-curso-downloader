@@ -34,15 +34,62 @@ def parse_args():
             "sem transferir os arquivos enumerados."
         )
     )
-    parser.add_argument("course_id")
+    parser.add_argument("course_id", nargs="+")
     parser.add_argument("--submit-login", action="store_true")
     return parser.parse_args()
 
 
+def check_course(api_session, course_id: str) -> int:
+    course = get_course_snapshot(api_session, course_id)
+
+    print(f"Course ID: {course.course_id}")
+    print(f"Title: {course.title}")
+    print(f"Declared lessons: {course.total_lessons}")
+    print(f"Unique lesson IDs: {len(course.lessons)}")
+    issues = list(course.unexpected_url_fields)
+    issues.extend(course.unresolved)
+    for path in course.unexpected_url_fields:
+        print(f"Unknown course URL field: {path}")
+    for description in course.unresolved:
+        print(f"Unresolved course field: {description}")
+    for path in course.ignored_ui_url_fields:
+        print(f"Known course UI URL field: {path}")
+
+    total_materials = 0
+    total_videos = 0
+    for lesson in course.lessons:
+        snapshot = get_lesson_snapshot(api_session, lesson)
+        total_materials += len(snapshot.materials)
+        total_videos += len(snapshot.videos)
+        print(
+            f"Lesson {lesson.position}/{course.total_lessons}: "
+            f"id={lesson.lesson_id}; folder=aula_{lesson.number:02d}; "
+            f"materials={len(snapshot.materials)}; "
+            f"videos={len(snapshot.videos)}; "
+            f"unresolved={len(snapshot.unresolved)}; "
+            f"unknown_url_fields={len(snapshot.unexpected_url_fields)}"
+        )
+        for description in snapshot.unresolved:
+            print(f"Unresolved: {description}")
+        for path in snapshot.unexpected_url_fields:
+            print(f"Unknown lesson URL field: {path}")
+        issues.extend(snapshot.unresolved)
+        issues.extend(snapshot.unexpected_url_fields)
+
+    print(f"Future release dates: {len(course.future_release_dates)}")
+    print(f"Total materials: {total_materials}")
+    print(f"Total videos: {total_videos}")
+    print(f"Inventory issues: {len(issues)}")
+    return len(issues)
+
+
 def main() -> int:
     args = parse_args()
-    if not args.course_id.isdigit():
-        print("course_id deve conter somente dígitos", file=sys.stderr)
+    invalid_ids = [
+        course_id for course_id in args.course_id if not course_id.isdigit()
+    ]
+    if invalid_ids:
+        print("cada course_id deve conter somente dígitos", file=sys.stderr)
         return 2
 
     email = (os.getenv("ESTRATEGIA_EMAIL") or "").strip()
@@ -70,49 +117,15 @@ def main() -> int:
             )
             password = None
 
-            course_url = montar_curso_url(args.course_id)
+            course_url = montar_curso_url(args.course_id[0])
             web_session = criar_sessao_download(driver, course_url)
             api_session = create_course_api_session(web_session)
-            course = get_course_snapshot(api_session, args.course_id)
-
-            print(f"Course ID: {course.course_id}")
-            print(f"Title: {course.title}")
-            print(f"Declared lessons: {course.total_lessons}")
-            print(f"Unique lesson IDs: {len(course.lessons)}")
-            issues = list(course.unexpected_url_fields)
-            issues.extend(course.unresolved)
-            for path in course.unexpected_url_fields:
-                print(f"Unknown course URL field: {path}")
-            for description in course.unresolved:
-                print(f"Unresolved course field: {description}")
-            for path in course.ignored_ui_url_fields:
-                print(f"Known course UI URL field: {path}")
-
-            total_materials = 0
-            total_videos = 0
-            for lesson in course.lessons:
-                snapshot = get_lesson_snapshot(api_session, lesson)
-                total_materials += len(snapshot.materials)
-                total_videos += len(snapshot.videos)
-                print(
-                    f"Lesson {lesson.position}/{course.total_lessons}: "
-                    f"id={lesson.lesson_id}; folder=aula_{lesson.number:02d}; "
-                    f"materials={len(snapshot.materials)}; "
-                    f"videos={len(snapshot.videos)}; "
-                    f"unresolved={len(snapshot.unresolved)}; "
-                    f"unknown_url_fields={len(snapshot.unexpected_url_fields)}"
-                )
-                for description in snapshot.unresolved:
-                    print(f"Unresolved: {description}")
-                for path in snapshot.unexpected_url_fields:
-                    print(f"Unknown lesson URL field: {path}")
-                issues.extend(snapshot.unresolved)
-                issues.extend(snapshot.unexpected_url_fields)
-
-            print(f"Total materials: {total_materials}")
-            print(f"Total videos: {total_videos}")
-            print(f"Inventory issues: {len(issues)}")
-            return 1 if issues else 0
+            issue_count = 0
+            for index, course_id in enumerate(args.course_id):
+                if index:
+                    print()
+                issue_count += check_course(api_session, course_id)
+            return 1 if issue_count else 0
     except Exception as error:
         message = sanitizar_texto(str(error)).split("Stacktrace:", 1)[0].strip()
         print(f"API inventory check failed: {message}", file=sys.stderr)
