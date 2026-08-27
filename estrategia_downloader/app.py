@@ -1879,12 +1879,6 @@ def executar_conteudo_curso(
                         f"{aula.name}: API marcou a aula como indisponível sem "
                         "uma data futura válida"
                     )
-            elif aula.is_available is True and data_futura:
-                aulas_bloqueadas.append(aula)
-                gerenciador.registrar_falha_descoberta(
-                    f"{aula.name}: API marcou a aula como disponível, mas sua "
-                    "data de publicação ainda é futura"
-                )
             elif data_futura:
                 aulas_futuras.append(aula)
             else:

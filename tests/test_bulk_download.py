@@ -532,6 +532,83 @@ class BulkDownloadTest(unittest.TestCase):
                 "aguardando_liberacao",
             )
 
+    def test_future_date_wins_over_contradictory_available_flag(self):
+        available = CourseLesson(
+            "20",
+            1,
+            0,
+            "Aula 00",
+            "https://site/aulas/20",
+            is_available=True,
+        )
+        future = CourseLesson(
+            "21",
+            2,
+            1,
+            "Aula 01",
+            "https://site/aulas/21",
+            release_date=date(2099, 9, 1),
+            is_available=True,
+        )
+        course = CourseSnapshot(
+            "100",
+            "Curso Misto",
+            2,
+            (available, future),
+            future_release_dates=(date(2099, 9, 1),),
+        )
+        available_snapshot = extract_lesson_snapshot(
+            {
+                "data": {
+                    "id": 20,
+                    "pdf": "https://cdn.test/20.pdf",
+                    "videos": [],
+                }
+            },
+            available,
+        )
+
+        with TemporaryDirectory() as directory, \
+            patch.object(app, "GerenciadorDownloads", CourseDownloadManagerFake), \
+            patch.object(app, "create_course_api_session", return_value=Mock()), \
+            patch.object(app, "get_course_snapshot", return_value=course), \
+            patch.object(
+                app,
+                "get_lesson_snapshot",
+                return_value=available_snapshot,
+            ) as get_lesson, \
+            patch("sys.stdout"):
+            destination = Path(directory) / "curso-id-100"
+            destination.mkdir()
+
+            result = app.executar_conteudo_curso(
+                DriverFake(),
+                Mock(),
+                PanelFake(),
+                "100",
+                "Curso Misto",
+                destination,
+                modo_reduzido=False,
+                auditar_existentes=True,
+            )
+
+            inventory = json.loads(
+                (destination / ".inventario_estrategia.json").read_text("utf-8")
+            )
+            self.assertEqual(get_lesson.call_count, 1)
+            self.assertEqual(get_lesson.call_args.args[1].lesson_id, "20")
+            self.assertEqual(result["status_curso"], "aguardando_liberacao")
+            self.assertEqual(result["aulas_confirmadas"], 1)
+            self.assertEqual(result["aulas_aguardando_liberacao"], 1)
+            self.assertEqual(
+                inventory["aulas"]["aula_01_posicao_02"]["modo"],
+                "aguardando_liberacao",
+            )
+            self.assertEqual(
+                inventory["aulas"]["aula_01_posicao_02"]["liberacao"],
+                "2099-09-01",
+            )
+
     def test_future_lesson_uses_embedded_resources_without_detail_request(self):
         future = CourseLesson(
             "21",
