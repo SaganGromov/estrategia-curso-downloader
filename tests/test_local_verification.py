@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 from estrategia_downloader.integrity import AUDIT_VERSION, INVENTORY_SCHEMA
@@ -130,6 +131,79 @@ class LocalVerificationTest(unittest.TestCase):
             self.assertTrue(report["ok"])
             with self.assertRaises(ValueError):
                 write_certificate(course, report)
+
+    def test_certifies_released_content_while_future_lesson_is_scheduled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            course = self._course(Path(temporary))
+            inventory_path = course / ".inventario_estrategia.json"
+            state_path = course / ".estado_estrategia.json"
+            inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            release = (date.today() + timedelta(days=30)).isoformat()
+            inventory["status"] = "aguardando_liberacao"
+            inventory["metadados"] = {
+                "liberacoes_futuras": [release],
+                "proxima_liberacao": release,
+            }
+            inventory["aulas"]["aula_01_posicao_02"] = {
+                "nome": "Aula 01",
+                "passagens": 0,
+                "estavel": True,
+                "modo": "aguardando_liberacao",
+                "liberacao": release,
+                "materiais": [],
+                "videos": [],
+                "arquivos": [],
+            }
+            state["status"] = "aguardando_liberacao"
+            state["resumo"]["aulas_aguardando_liberacao"] = 1
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            report = verify_course_folder(course, verify_structure=False)
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["status_inventario"], "aguardando_liberacao")
+            self.assertEqual(report["aulas_confirmadas"], 1)
+            self.assertEqual(report["aulas_aguardando_liberacao"], 1)
+            self.assertEqual(report["liberacoes_futuras"], [release])
+            self.assertEqual(report["ocorrencias_manifesto"], 2)
+
+    def test_rejects_scheduled_inventory_once_release_is_due(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            course = self._course(Path(temporary))
+            inventory_path = course / ".inventario_estrategia.json"
+            state_path = course / ".estado_estrategia.json"
+            inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            release = (date.today() - timedelta(days=1)).isoformat()
+            inventory["status"] = "aguardando_liberacao"
+            inventory["metadados"] = {
+                "liberacoes_futuras": [release],
+                "proxima_liberacao": release,
+            }
+            inventory["aulas"]["aula_01_posicao_02"] = {
+                "nome": "Aula 01",
+                "passagens": 0,
+                "estavel": True,
+                "modo": "aguardando_liberacao",
+                "liberacao": release,
+                "materiais": [],
+                "videos": [],
+                "arquivos": [],
+            }
+            state["status"] = "aguardando_liberacao"
+            state["resumo"]["aulas_aguardando_liberacao"] = 1
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            report = verify_course_folder(course, verify_structure=False)
+
+            self.assertFalse(report["ok"])
+            self.assertIn(
+                "scheduled_release",
+                {item["codigo"] for item in report["problemas"]},
+            )
 
 
 if __name__ == "__main__":

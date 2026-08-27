@@ -7,7 +7,7 @@ import json
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .integrity import AUDIT_VERSION, INVENTORY_FILE, INVENTORY_SCHEMA
@@ -182,10 +182,17 @@ def verify_course_folder(
         issues.append(
             _issue("audit_version", "versão da auditoria não é a versão atual")
         )
-    if inventory.get("status") != "completo":
-        issues.append(_issue("inventory_status", "inventário não está completo"))
-    if state.get("status") != "concluido":
-        issues.append(_issue("state_status", "estado do curso não está concluído"))
+    inventory_status = inventory.get("status")
+    scheduled = inventory_status == "aguardando_liberacao"
+    if inventory_status not in {"completo", "aguardando_liberacao"}:
+        issues.append(
+            _issue("inventory_status", "inventário não possui um estado final")
+        )
+    expected_state = "aguardando_liberacao" if scheduled else "concluido"
+    if state.get("status") != expected_state:
+        issues.append(
+            _issue("state_status", "estado do curso diverge do inventário")
+        )
 
     course_id = str(inventory.get("curso_id") or state.get("curso_id") or "")
     if not course_id or (
@@ -201,6 +208,9 @@ def verify_course_folder(
         issues.append(_issue("lessons", "mapa de aulas ausente ou inválido"))
 
     expected_records: list[tuple[str, int, dict]] = []
+    confirmed_lessons = 0
+    scheduled_lessons = 0
+    scheduled_dates: list[str] = []
     for lesson_key, lesson in sorted(lessons.items()):
         parts = str(lesson_key).split("_")
         try:
@@ -215,7 +225,40 @@ def verify_course_folder(
         if not isinstance(lesson, dict):
             issues.append(_issue("lesson", f"aula inválida: {lesson_key}"))
             continue
-        if lesson.get("modo") != "api" or lesson.get("passagens") != 1:
+        lesson_mode = lesson.get("modo")
+        lesson_passes = lesson.get("passagens")
+        if lesson_mode == "api" and lesson_passes == 1:
+            confirmed_lessons += 1
+        elif scheduled and lesson_mode in {
+            "aguardando_liberacao",
+            "resumo_api_aguardando_liberacao",
+        }:
+            scheduled_lessons += 1
+            release = lesson.get("liberacao")
+            try:
+                release_date = date.fromisoformat(str(release))
+            except ValueError:
+                release_date = None
+            if release_date is None or release_date <= date.today():
+                issues.append(
+                    _issue(
+                        "scheduled_release",
+                        f"{lesson_key} não possui liberação futura válida",
+                    )
+                )
+            else:
+                scheduled_dates.append(release_date.isoformat())
+            expected_passes = (
+                0 if lesson_mode == "aguardando_liberacao" else 1
+            )
+            if lesson_passes != expected_passes:
+                issues.append(
+                    _issue(
+                        "lesson_mode",
+                        f"{lesson_key} possui passagens incompatíveis com seu modo",
+                    )
+                )
+        else:
             issues.append(
                 _issue(
                     "lesson_mode",
@@ -232,6 +275,13 @@ def verify_course_folder(
                 _issue("lesson_files", f"{lesson_key} não possui lista de arquivos")
             )
             continue
+        if lesson_mode == "aguardando_liberacao" and records:
+            issues.append(
+                _issue(
+                    "scheduled_files",
+                    f"{lesson_key} possui arquivos antes da liberação",
+                )
+            )
         for record in records:
             if not isinstance(record, dict) or _resource_base(record) is None:
                 issues.append(
@@ -268,10 +318,36 @@ def verify_course_folder(
                 "contagem de recursos únicos diverge das identidades do inventário",
             )
         )
-    if summary.get("aulas_confirmadas") != len(lessons):
+    if summary.get("aulas_confirmadas") != confirmed_lessons:
         issues.append(
             _issue("lesson_count", "contagem de aulas confirmadas diverge do inventário")
         )
+    if summary.get("aulas_aguardando_liberacao", 0) != scheduled_lessons:
+        issues.append(
+            _issue(
+                "scheduled_lesson_count",
+                "contagem de aulas futuras diverge do inventário",
+            )
+        )
+    if confirmed_lessons + scheduled_lessons != len(lessons):
+        issues.append(
+            _issue("total_lesson_count", "nem todas as aulas possuem estado final")
+        )
+    metadata = inventory.get("metadados")
+    if scheduled:
+        if not isinstance(metadata, dict):
+            issues.append(
+                _issue("scheduled_metadata", "metadados de liberação ausentes")
+            )
+        else:
+            declared_dates = metadata.get("liberacoes_futuras")
+            if declared_dates != sorted(set(scheduled_dates)):
+                issues.append(
+                    _issue(
+                        "scheduled_dates",
+                        "datas futuras do inventário divergem das aulas",
+                    )
+                )
 
     all_files = sorted(path for path in folder.rglob("*") if path.is_file())
     transients = [path for path in all_files if _is_transient(path)]
@@ -367,10 +443,14 @@ def verify_course_folder(
         "schema_certificado": CERTIFICATE_SCHEMA,
         "curso_id": course_id,
         "versao_auditoria": inventory.get("versao_auditoria"),
+        "status_inventario": inventory_status,
         "inventario_atualizado_em": inventory.get("atualizado_em"),
         "verificado_em": datetime.now(UTC).isoformat(),
         "ok": not issues,
         "recursos_unicos": len(identities),
+        "aulas_confirmadas": confirmed_lessons,
+        "aulas_aguardando_liberacao": scheduled_lessons,
+        "liberacoes_futuras": sorted(set(scheduled_dates)),
         "ocorrencias_manifesto": expected_occurrences,
         "ocorrencias_localizadas": len(matched),
         "arquivos_fisicos": len(content_files),
