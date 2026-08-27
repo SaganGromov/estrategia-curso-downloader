@@ -56,6 +56,7 @@ from .course_metadata import (
     get_course_name,
     list_accessible_courses,
 )
+from .course_inventory import LessonSnapshot
 from .diagnostics import criar_diagnostico
 from .discovery import classificar_material as classificar_material_puro
 from .downloads import (
@@ -1389,6 +1390,86 @@ def registrar_e_baixar(item, arquivo_links, gerenciador: GerenciadorDownloads):
     )
     arquivo_links.flush()
     return gerenciador.baixar(item)
+
+
+def auditar_e_baixar_snapshot_api(
+    snapshot: LessonSnapshot,
+    arquivo_links,
+    gerenciador: GerenciadorDownloads,
+    *,
+    tipos_permitidos=None,
+    incluir_videos: bool,
+) -> dict:
+    """Baixa exatamente os recursos enumerados por uma resposta de aula."""
+
+    materiais_manifesto = {}
+    videos_manifesto = {}
+    arquivos_manifesto = {}
+
+    for descricao in snapshot.unresolved:
+        gerenciador.registrar_falha_descoberta(
+            f"{snapshot.lesson.name}: {descricao}"
+        )
+    for caminho in snapshot.unexpected_url_fields:
+        gerenciador.registrar_falha_descoberta(
+            f"{snapshot.lesson.name}: campo de URL não classificado em {caminho}"
+        )
+
+    materiais = [
+        item
+        for item in snapshot.materials
+        if tipos_permitidos is None or item["tipo"] in tipos_permitidos
+    ]
+    videos = list(snapshot.videos) if incluir_videos else []
+    identidades_video = snapshot.video_identities if incluir_videos else ()
+
+    if incluir_videos and len(videos) != len(identidades_video):
+        gerenciador.registrar_falha_descoberta(
+            f"{snapshot.lesson.name}: a API anunciou "
+            f"{len(identidades_video)} vídeo(s), mas forneceu "
+            f"{len(videos)} arquivo(s) utilizável(is)"
+        )
+
+    for item in materiais:
+        chave = resource_key(item["url"])
+        registro = safe_resource_record(item)
+        materiais_manifesto[chave] = registro
+        arquivos_manifesto[chave] = registro
+        registrar_e_baixar(dict(item), arquivo_links, gerenciador)
+
+    for identidade, posicao, titulo in identidades_video:
+        videos_manifesto[identidade] = safe_video_record(
+            identidade,
+            posicao,
+            titulo,
+        )
+    for item in videos:
+        chave = resource_key(item["url"])
+        arquivos_manifesto[chave] = safe_resource_record(item)
+        registrar_e_baixar(dict(item), arquivo_links, gerenciador)
+
+    recursos_pendentes = set(arquivos_manifesto) - gerenciador.urls_concluidas
+    if recursos_pendentes:
+        gerenciador.registrar_falha_descoberta(
+            f"{snapshot.lesson.name}: {len(recursos_pendentes)} recurso(s) "
+            "enumerado(s) pela API não tiveram arquivo local validado"
+        )
+
+    return {
+        "nome": safe_filename(snapshot.lesson.name),
+        "passagens": 1,
+        "estavel": not snapshot.unresolved and not snapshot.unexpected_url_fields,
+        "modo": "api",
+        "materiais": sorted(
+            materiais_manifesto.values(), key=lambda item: item["identidade"]
+        ),
+        "videos": sorted(
+            videos_manifesto.values(), key=lambda item: item["identidade"]
+        ),
+        "arquivos": sorted(
+            arquivos_manifesto.values(), key=lambda item: item["identidade"]
+        ),
+    }
 
 
 def _inventario_videos_dom(driver, alertas=None):
