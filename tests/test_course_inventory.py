@@ -93,9 +93,14 @@ class CourseInventoryTest(unittest.TestCase):
                         {
                             "id": 40,
                             "nome": "Aula 00",
-                            "aviso": "Disponível em 01/09/2026",
+                            "data_publicacao": "2026-09-01T03:00:00.000Z",
+                            "is_disponivel": False,
                         },
-                        {"id": 41, "nome": "Aula 01"},
+                        {
+                            "id": 41,
+                            "nome": "Aula 01",
+                            "is_disponivel": True,
+                        },
                     ],
                 }
             },
@@ -104,9 +109,11 @@ class CourseInventoryTest(unittest.TestCase):
         )
 
         self.assertEqual(snapshot.lessons[0].release_date, date(2026, 9, 1))
+        self.assertFalse(snapshot.lessons[0].is_available)
         self.assertIsNone(snapshot.lessons[1].release_date)
+        self.assertTrue(snapshot.lessons[1].is_available)
         self.assertEqual(snapshot.future_release_dates, (date(2026, 9, 1),))
-        self.assertIn("aviso:string", snapshot.lesson_summary_schema)
+        self.assertIn("data_publicacao:string", snapshot.lesson_summary_schema)
         self.assertIn("id:number", snapshot.lesson_summary_schema)
 
     def test_course_snapshot_reports_unknown_urls_without_their_values(self):

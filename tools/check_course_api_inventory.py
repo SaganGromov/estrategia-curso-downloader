@@ -76,12 +76,19 @@ def check_course(
     total_videos = 0
     future_lessons = 0
     for lesson in course.lessons:
-        if lesson.release_date is not None and lesson.release_date > date.today():
+        if lesson.is_available is False or (
+            lesson.release_date is not None and lesson.release_date > date.today()
+        ):
             future_lessons += 1
+            release = (
+                lesson.release_date.isoformat()
+                if lesson.release_date is not None
+                else "unknown"
+            )
             print(
                 f"Lesson {lesson.position}/{course.total_lessons}: "
                 f"id={lesson.lesson_id}; folder=aula_{lesson.number:02d}; "
-                f"future_release={lesson.release_date.isoformat()}; "
+                f"future_release={release}; "
                 "detail_request=skipped"
             )
             continue

@@ -60,6 +60,7 @@ class CourseLesson:
     name: str
     href: str
     release_date: date | None = None
+    is_available: bool | None = None
     summary_resources: tuple[tuple[str, str, str, str, str], ...] = field(
         default=(),
         repr=False,
@@ -195,6 +196,18 @@ def _future_release_dates(value, *, today: date | None = None) -> tuple[date, ..
     return tuple(value for value in _release_dates(value) if value > reference)
 
 
+def _publication_date(value) -> date | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    match = re.search(r"\b(\d{4}-[01]\d-[0-3]\d)(?=$|[T\s])", value)
+    if not match:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
 def extract_course_snapshot(
     payload,
     course_id: str,
@@ -253,12 +266,31 @@ def extract_course_snapshot(
             name = f"{heading}\n{description}"
         else:
             name = heading or description or f"Aula {position - 1:02d}"
-        release_dates = _release_dates(record)
+        availability = record.get("is_disponivel")
+        if availability is not None and not isinstance(availability, bool):
+            unresolved.append(
+                f"data.aulas[{position - 1}].is_disponivel não é booleano"
+            )
+            availability = None
+        raw_publication = record.get("data_publicacao")
+        publication_date = _publication_date(raw_publication)
+        if (
+            isinstance(raw_publication, str)
+            and raw_publication.strip()
+            and publication_date is None
+        ):
+            unresolved.append(
+                f"data.aulas[{position - 1}].data_publicacao não contém "
+                "uma data ISO válida"
+            )
+        release_dates = set(_release_dates(record))
+        if publication_date is not None:
+            release_dates.add(publication_date)
         if len(release_dates) > 1:
             raise CourseInventoryError(
                 f"data.aulas[{position - 1}] contém datas de liberação conflitantes"
             )
-        release_date = release_dates[0] if release_dates else None
+        release_date = next(iter(release_dates), None)
         summary_resources = []
         for (
             field_name,
@@ -288,6 +320,7 @@ def extract_course_snapshot(
                 position,
                 name,
                 release_date,
+                availability,
                 tuple(summary_resources),
             )
         )
@@ -305,6 +338,7 @@ def extract_course_snapshot(
                 lesson_id=lesson_id,
             ),
             release_date=release_date,
+            is_available=availability,
             summary_resources=summary_resources,
         )
         for (
@@ -312,6 +346,7 @@ def extract_course_snapshot(
             position,
             name,
             release_date,
+            availability,
             summary_resources,
         ), number in zip(
             records,
@@ -333,7 +368,17 @@ def extract_course_snapshot(
         title=title,
         total_lessons=total,
         lessons=lessons,
-        future_release_dates=_future_release_dates(data, today=today),
+        future_release_dates=tuple(
+            sorted(
+                set(_future_release_dates(data, today=today))
+                | {
+                    lesson.release_date
+                    for lesson in lessons
+                    if lesson.release_date is not None
+                    and lesson.release_date > (today or date.today())
+                }
+            )
+        ),
         unexpected_url_fields=tuple(
             sorted(
                 path
