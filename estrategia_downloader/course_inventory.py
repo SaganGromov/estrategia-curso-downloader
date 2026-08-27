@@ -46,6 +46,13 @@ _LESSON_RESOURCE_FIELDS = (
     ("audio", "material", "Áudio da aula", ".mp3"),
     ("thumbnail", "material", "Imagem da aula", ".jpg"),
 )
+_VIDEO_RESOURCE_FIELDS = (
+    ("resumo", "pdf", "Baixar Resumo", ".pdf"),
+    ("slide", "slides", "Baixar Slides", ".pdf"),
+    ("mapa_mental", "mapa_mental", "Baixar Mapa Mental", ".pdf"),
+    ("audio", "material", "Áudio", ".mp3"),
+    ("thumbnail", "material", "Imagem", ".jpg"),
+)
 
 
 class CourseInventoryError(CourseMetadataError):
@@ -62,6 +69,11 @@ class CourseLesson:
     release_date: date | None = None
     is_available: bool | None = None
     summary_resources: tuple[tuple[str, str, str, str, str], ...] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+    summary_videos: tuple[tuple[str, int, str, str], ...] = field(
         default=(),
         repr=False,
         compare=False,
@@ -292,6 +304,7 @@ def extract_course_snapshot(
             )
         release_date = next(iter(release_dates), None)
         summary_resources = []
+        summary_videos = []
         for (
             field_name,
             kind,
@@ -314,6 +327,89 @@ def extract_course_snapshot(
                 unresolved.append(
                     f"{resource_path}: valor não contém URL HTTP utilizável"
                 )
+
+        raw_summary_videos = record.get("videos")
+        if raw_summary_videos is None:
+            raw_summary_videos = []
+        if not isinstance(raw_summary_videos, list):
+            raise CourseInventoryError(
+                f"data.aulas[{position - 1}].videos não é uma lista"
+            )
+        seen_summary_video_ids = set()
+        for video_position, video_record in enumerate(
+            raw_summary_videos,
+            start=1,
+        ):
+            video_path = (
+                f"$.data.aulas[{position - 1}].videos[{video_position - 1}]"
+            )
+            if not isinstance(video_record, Mapping):
+                raise CourseInventoryError(f"{video_path} não é um objeto")
+            video_id = _numeric_id(video_record.get("id"), video_path)
+            if video_id in seen_summary_video_ids:
+                raise CourseInventoryError(
+                    f"o vídeo {video_id} aparece mais de uma vez em {video_path}"
+                )
+            seen_summary_video_ids.add(video_id)
+            video_title = (
+                _text(video_record, "titulo", "nome")
+                or f"Vídeo {video_position:02d}"
+            )
+
+            raw_resolutions = video_record.get("resolucoes")
+            if raw_resolutions is None:
+                raw_resolutions = {}
+            if not isinstance(raw_resolutions, Mapping):
+                unresolved.append(f"{video_path}.resolucoes não é um objeto")
+                raw_resolutions = {}
+            options = []
+            for label, value in raw_resolutions.items():
+                resolution_path = f"{video_path}.resolucoes.{label}"
+                option_url = _http_url(value)
+                if option_url:
+                    consumed_url_fields.add(resolution_path)
+                    options.append((_resolution(label), str(label), option_url))
+                elif isinstance(value, str) and value.strip():
+                    unresolved.append(
+                        f"{resolution_path}: valor não contém URL HTTP utilizável"
+                    )
+            if options:
+                _height, _label, video_url = max(
+                    options,
+                    key=lambda item: (item[0], item[1]),
+                )
+                summary_videos.append(
+                    (video_id, video_position, video_title, video_url)
+                )
+
+            for (
+                field_name,
+                kind,
+                resource_title,
+                fallback,
+            ) in _VIDEO_RESOURCE_FIELDS:
+                resource_path = f"{video_path}.{field_name}"
+                raw_resource = video_record.get(field_name)
+                resource_url = _http_url(raw_resource)
+                if resource_url:
+                    consumed_url_fields.add(resource_path)
+                    summary_resources.append(
+                        (
+                            f"videos[{video_position - 1}].{field_name}",
+                            kind,
+                            f"{resource_title} - {video_title}",
+                            fallback,
+                            resource_url,
+                        )
+                    )
+                elif (
+                    isinstance(raw_resource, str)
+                    and raw_resource.strip()
+                    and field_name != "resumo"
+                ):
+                    unresolved.append(
+                        f"{resource_path}: valor não contém URL HTTP utilizável"
+                    )
         records.append(
             (
                 lesson_id,
@@ -322,6 +418,7 @@ def extract_course_snapshot(
                 release_date,
                 availability,
                 tuple(summary_resources),
+                tuple(summary_videos),
             )
         )
         number_candidates.append(_lesson_number(name, record))
@@ -340,6 +437,7 @@ def extract_course_snapshot(
             release_date=release_date,
             is_available=availability,
             summary_resources=summary_resources,
+            summary_videos=summary_videos,
         )
         for (
             lesson_id,
@@ -348,6 +446,7 @@ def extract_course_snapshot(
             release_date,
             availability,
             summary_resources,
+            summary_videos,
         ), number in zip(
             records,
             numbers,
@@ -513,6 +612,24 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
         raise CourseInventoryError("o inventário da aula não contém data.videos")
 
     seen_video_ids = set()
+    usable_video_ids = set()
+    pending_video_issues = {}
+
+    def add_video(video_id, position, title, url):
+        videos.append(
+            {
+                "tipo": "video",
+                "aula_num": lesson.number,
+                "aula_nome": safe_filename(lesson.name),
+                "item_num": position,
+                "titulo": safe_filename(title),
+                "extensao": _extension(url, ".mp4"),
+                "url": url,
+            }
+        )
+        video_identities.append((f"id={video_id}", position, title))
+        usable_video_ids.add(video_id)
+
     for position, record in enumerate(raw_videos, start=1):
         path = f"$.data.videos[{position - 1}]"
         if not isinstance(record, Mapping):
@@ -523,8 +640,9 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
         seen_video_ids.add(video_id)
         title = _text(record, "titulo", "nome") or f"Vídeo {position:02d}"
         resolutions = record.get("resolucoes")
+        video_issues = []
         if not isinstance(resolutions, Mapping):
-            unresolved.append(f"{path}.resolucoes: mapa de qualidades ausente")
+            video_issues.append(f"{path}.resolucoes: mapa de qualidades ausente")
             resolutions = {}
         options = []
         for label, value in resolutions.items():
@@ -533,37 +651,27 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
                 consumed_paths.add(f"{path}.resolucoes.{label}")
                 options.append((_resolution(label), str(label), option_url))
         if not options:
-            unresolved.append(f"{path}: nenhum link de vídeo utilizável")
+            video_issues.append(f"{path}: nenhum link de vídeo utilizável")
+            pending_video_issues[video_id] = video_issues
         else:
             _height, _label, url = max(options, key=lambda item: (item[0], item[1]))
-            videos.append(
-                {
-                    "tipo": "video",
-                    "aula_num": lesson.number,
-                    "aula_nome": safe_filename(lesson.name),
-                    "item_num": position,
-                    "titulo": safe_filename(title),
-                    "extensao": _extension(url, ".mp4"),
-                    "url": url,
-                }
-            )
-            video_identities.append((f"id={video_id}", position, title))
+            add_video(video_id, position, title, url)
 
-        per_video_fields = (
-            ("resumo", "pdf", f"Baixar Resumo - {title}", ".pdf"),
-            ("slide", "slides", f"Baixar Slides - {title}", ".pdf"),
-            ("mapa_mental", "mapa_mental", f"Baixar Mapa Mental - {title}", ".pdf"),
-            ("audio", "material", f"Áudio - {title}", ".mp3"),
-            ("thumbnail", "material", f"Imagem - {title}", ".jpg"),
-        )
-        for field, kind, material_title, fallback in per_video_fields:
+        for field, kind, material_title, fallback in _VIDEO_RESOURCE_FIELDS:
             add_material(
                 f"{path}.{field}",
                 record.get(field),
                 kind,
-                material_title,
+                f"{material_title} - {title}",
                 fallback,
             )
+
+    for video_id, position, title, url in lesson.summary_videos:
+        if video_id not in usable_video_ids:
+            add_video(video_id, position, title, url)
+    for video_id, issues in pending_video_issues.items():
+        if video_id not in usable_video_ids:
+            unresolved.extend(issues)
 
     unexpected = sorted(
         path

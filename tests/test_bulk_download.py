@@ -532,6 +532,68 @@ class BulkDownloadTest(unittest.TestCase):
                 "aguardando_liberacao",
             )
 
+    def test_future_lesson_uses_embedded_resources_without_detail_request(self):
+        future = CourseLesson(
+            "21",
+            1,
+            0,
+            "Aula 00",
+            "https://site/aulas/21",
+            release_date=date(2099, 9, 1),
+            is_available=False,
+            summary_resources=(
+                (
+                    "videos[0].audio",
+                    "material",
+                    "Áudio - Parte 1",
+                    ".mp3",
+                    "https://cdn.test/audio.mp3",
+                ),
+            ),
+            summary_videos=(
+                ("90", 1, "Parte 1", "https://cdn.test/video.mp4"),
+            ),
+        )
+        course = CourseSnapshot(
+            "100",
+            "Curso Futuro",
+            1,
+            (future,),
+            future_release_dates=(date(2099, 9, 1),),
+        )
+        panel = PanelFake()
+
+        with TemporaryDirectory() as directory, \
+            patch.object(app, "GerenciadorDownloads", CourseDownloadManagerFake), \
+            patch.object(app, "create_course_api_session", return_value=Mock()), \
+            patch.object(app, "get_course_snapshot", return_value=course), \
+            patch.object(app, "get_lesson_snapshot") as get_lesson, \
+            patch("sys.stdout"):
+            destination = Path(directory) / "curso-id-100"
+            destination.mkdir()
+
+            result = app.executar_conteudo_curso(
+                DriverFake(),
+                Mock(),
+                panel,
+                "100",
+                "Curso Futuro",
+                destination,
+                modo_reduzido=False,
+                auditar_existentes=True,
+            )
+
+            inventory = json.loads(
+                (destination / ".inventario_estrategia.json").read_text("utf-8")
+            )
+            get_lesson.assert_not_called()
+            self.assertEqual(result["encontrados"], 2)
+            self.assertEqual(result["status_curso"], "aguardando_liberacao")
+            self.assertEqual(
+                inventory["aulas"]["aula_00_posicao_01"]["modo"],
+                "resumo_api_aguardando_liberacao",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

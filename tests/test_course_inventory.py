@@ -184,6 +184,146 @@ class CourseInventoryTest(unittest.TestCase):
         )
         self.assertEqual(len(lesson_snapshot.materials), 2)
 
+    def test_reconciles_embedded_course_videos_with_lesson_detail(self):
+        snapshot = extract_course_snapshot(
+            {
+                "data": {
+                    "id": 100,
+                    "nome": "Curso",
+                    "total_aulas": 1,
+                    "aulas": [
+                        {
+                            "id": 20,
+                            "nome": "Aula 00",
+                            "videos": [
+                                {
+                                    "id": 90,
+                                    "titulo": "Parte 1",
+                                    "audio": "https://cdn.test/audio.mp3?token=secret",
+                                    "slide": "https://cdn.test/slide.pdf?token=secret",
+                                    "thumbnail": "https://cdn.test/thumb.jpg?token=secret",
+                                    "resolucoes": {
+                                        "480p": "https://cdn.test/video-480.mp4?token=secret",
+                                        "1080p": "https://cdn.test/video-1080.mp4?token=secret",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            },
+            "100",
+        )
+
+        lesson = snapshot.lessons[0]
+        self.assertEqual(snapshot.unexpected_url_fields, ())
+        self.assertEqual(snapshot.unresolved, ())
+        self.assertEqual(len(lesson.summary_resources), 3)
+        self.assertEqual(len(lesson.summary_videos), 1)
+        self.assertEqual(lesson.summary_videos[0][:3], ("90", 1, "Parte 1"))
+        self.assertIn("video-1080.mp4", lesson.summary_videos[0][3])
+        self.assertNotIn("secret", repr(lesson))
+
+        detail = extract_lesson_snapshot(
+            {
+                "data": {
+                    "id": 20,
+                    "videos": [
+                        {
+                            "id": 90,
+                            "titulo": "Parte 1",
+                            "audio": "https://cdn.test/audio.mp3?token=refreshed",
+                            "slide": "https://cdn.test/slide.pdf?token=refreshed",
+                            "thumbnail": "https://cdn.test/thumb.jpg?token=refreshed",
+                            "resolucoes": {
+                                "720p": "https://cdn.test/detail-720.mp4?token=refreshed"
+                            },
+                        }
+                    ],
+                }
+            },
+            lesson,
+        )
+
+        self.assertEqual(len(detail.videos), 1)
+        self.assertIn("detail-720.mp4", detail.videos[0]["url"])
+        self.assertEqual(detail.video_identities, (("id=90", 1, "Parte 1"),))
+        self.assertEqual(len(detail.materials), 3)
+        self.assertEqual(detail.unresolved, ())
+        self.assertEqual(detail.unexpected_url_fields, ())
+
+    def test_uses_embedded_video_when_lesson_detail_omits_its_link(self):
+        lesson = CourseLesson(
+            "20",
+            1,
+            0,
+            "Aula 00",
+            "https://site/aula",
+            summary_resources=(
+                (
+                    "videos[0].audio",
+                    "material",
+                    "Áudio - Parte 1",
+                    ".mp3",
+                    "https://cdn.test/audio.mp3",
+                ),
+            ),
+            summary_videos=(
+                ("90", 1, "Parte 1", "https://cdn.test/video.mp4"),
+            ),
+        )
+
+        detail = extract_lesson_snapshot(
+            {
+                "data": {
+                    "id": 20,
+                    "videos": [
+                        {
+                            "id": 90,
+                            "titulo": "Parte 1",
+                            "resolucoes": {},
+                        }
+                    ],
+                }
+            },
+            lesson,
+        )
+
+        self.assertEqual(len(detail.videos), 1)
+        self.assertEqual(len(detail.materials), 1)
+        self.assertEqual(detail.video_identities, (("id=90", 1, "Parte 1"),))
+        self.assertEqual(detail.unresolved, ())
+
+    def test_unknown_embedded_video_url_still_blocks_completeness(self):
+        snapshot = extract_course_snapshot(
+            {
+                "data": {
+                    "id": 100,
+                    "nome": "Curso",
+                    "total_aulas": 1,
+                    "aulas": [
+                        {
+                            "id": 20,
+                            "nome": "Aula 00",
+                            "videos": [
+                                {
+                                    "id": 90,
+                                    "arquivo_novo": "https://cdn.test/new.bin",
+                                    "resolucoes": {},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            },
+            "100",
+        )
+
+        self.assertEqual(
+            snapshot.unexpected_url_fields,
+            ("$.data.aulas[0].videos[0].arquivo_novo",),
+        )
+
     def test_lesson_snapshot_selects_highest_video_and_all_known_files(self):
         lesson = CourseLesson("3163819", 1, 5, "Aula 05", "https://site/aula")
         shared_slide = "https://cdn.test/slide.pdf?expiration=1"

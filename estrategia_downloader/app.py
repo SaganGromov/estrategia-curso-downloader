@@ -1948,7 +1948,11 @@ def executar_conteudo_curso(
                     }
                     continue
                 aula_futura = aula.lesson_id in ids_futuros
-                if aula_futura and not aula.summary_resources:
+                if (
+                    aula_futura
+                    and not aula.summary_resources
+                    and not aula.summary_videos
+                ):
                     inventario_aulas[chave_aula] = {
                         "nome": safe_filename(aula.name),
                         "passagens": 0,
