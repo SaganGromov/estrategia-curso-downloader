@@ -93,7 +93,8 @@ O atalho `iniciar_pdfs_e_slides.bat` abre o mesmo painel com o segundo modo já 
 
 ## Durante o download
 
-Os materiais são baixados assim que aparecem; o programa não espera terminar a varredura de todo o curso. O painel mostra:
+Os materiais são baixados assim que cada resposta de aula é validada; o
+programa não espera terminar o curso inteiro. O painel mostra:
 
 - fase atual e aula atual;
 - item atual, porcentagem, velocidade e ETA;
@@ -103,21 +104,25 @@ Os materiais são baixados assim que aparecem; o programa não espera terminar a
 - atividade em tempo real;
 - espaço livre no destino.
 
-Listas dinâmicas são roladas e paginadas até permanecerem estáveis. Se o link
-de um vídeo não aparecer, a aula é reaberta e auditada. No modo completo, cada
-aula é carregada novamente, em até oito passagens, até que os inventários de
-materiais e vídeos sejam idênticos em três leituras independentes; uma categoria
-vazia exige quatro.
-Isso detecta, por exemplo, PDFs que o React só revela depois que os vídeos já
-apareceram. Um vídeo ou material anunciado pelo site sem link, uma aula numerada
-inteiramente vazia, um inventário instável ou uma transferência que esgotou as
-tentativas passa a ser uma falha real: a execução preserva tudo o que concluiu,
-mas não informa falsamente que o curso está completo.
+Depois do login, a descoberta não lê nem recarrega o DOM. O programa faz um
+`GET /api/aluno/curso/<ID>` para obter a contagem e os IDs únicos das aulas e,
+para cada aula disponível, exatamente um `GET /api/aluno/aula/<ID-DA-AULA>`.
+Cada resposta enumera os vídeos e suas resoluções, livros eletrônicos original,
+simplificado e grifado, resumos, slides, mapas mentais, áudios, thumbnails e
+outros campos conhecidos. A maior resolução numérica de cada vídeo é escolhida.
 
-A rota geral de um curso pode alternar entre vazia e a última aula selecionada.
-Quando existem URLs próprias de aulas, essa rota é usada apenas para ampliar a
-união de recursos; a prova estrita de completude é feita em cada URL de aula.
-Cursos sem aulas numeradas continuam exigindo convergência da própria rota geral.
+A resposta do curso também fornece `is_disponivel` e `data_publicacao` por ID de
+aula. Detalhes ainda não liberados não são consultados repetidamente: o curso
+fica em `aguardando_liberacao`, com as datas persistidas, depois de todo o
+conteúdo atualmente acessível ser validado. Uma nova execução reavalia o mesmo
+ID quando a data chegar.
+
+A contagem declarada deve coincidir exatamente com a lista de aulas e não pode
+haver IDs duplicados. Todo vídeo precisa ter uma URL de resolução utilizável.
+Se a API introduzir uma URL em um campo ainda não classificado, ou se qualquer
+transferência falhar, o programa preserva os arquivos concluídos e recusa o
+estado `completo`. Assim, ausência numa resposta canônica pode ser aceita;
+ausência momentânea no React não é mais usada como prova.
 
 O botão **Cancelar download** pede confirmação, interrompe a transferência cooperativamente, fecha o Edge controlado e preserva arquivos completos e `.part` válidos.
 
@@ -168,11 +173,12 @@ O marcador `.estrategia_colecao.json` relaciona o ID do painel ao título exato,
 `aguardando_liberacao`. Por isso uma nova execução reconhece a coleção mesmo que
 ela tenha sido interrompida.
 
-Quando um curso ainda não possui conteúdo acessível, mas a API anuncia
-explicitamente datas futuras, ele recebe `aguardando_liberacao` e a próxima data
-fica no manifesto. Isso não é contado como erro nem como conclusão definitiva:
-uma execução posterior reutiliza a mesma pasta e verifica se as aulas já foram
-liberadas.
+Quando uma ou mais aulas ainda não possuem conteúdo acessível, mas a API marca
+`is_disponivel: false` e fornece datas futuras em `data_publicacao`, o curso
+recebe `aguardando_liberacao` e a próxima data fica no manifesto. Isso não é
+contado como erro nem como conclusão definitiva: uma execução posterior
+reutiliza a mesma pasta, preserva o conteúdo já validado e verifica somente o
+que tiver sido liberado.
 
 O arquivo `.inventario_estrategia.json` registra a versão da auditoria e os
 recursos enumerados pela API por aula. As identidades são hashes SHA-256; URLs
@@ -258,9 +264,10 @@ Confira a conexão e tente novamente. Proxy corporativo, firewall, AppLocker, an
 ### O curso não tem aulas ou materiais
 
 Confira o ID/URL, confirme que o login terminou e verifique se a conta realmente
-possui acesso ao curso. Por segurança, um curso sem nenhum arquivo e uma aula
-numerada vazia permanecem `incompleto`: ausência de itens no DOM não é aceita
-como prova de que o catálogo remoto está realmente vazio.
+possui acesso ao curso. Uma resposta válida da API pode confirmar que uma aula
+disponível está vazia. Uma aula marcada como indisponível sem data futura, uma
+contagem divergente ou um detalhe recusado inesperadamente mantém o curso como
+`incompleto`.
 
 ### A execução terminou com conteúdo pendente
 
@@ -328,8 +335,17 @@ name = get_course_name(api_session, "327532")
 pedir ao site a credencial temporária usada pela própria SPA. Depois disso, a
 sessão de API contém somente o cabeçalho `Authorization`, e a consulta é um
 `GET` direto. O endpoint não é público nem documentado e pode mudar; nenhuma
-credencial é gravada ou exibida. A versão 3.0 também usa esse título no fluxo
-normal para nomear cada nova pasta de download.
+credencial é gravada ou exibida. A versão 4.0 usa esse mesmo mecanismo para o
+título e para o inventário completo do curso.
+
+Para validar somente o inventário, sem baixar arquivos nem inspecionar o DOM:
+
+```powershell
+py .\tools\check_course_api_inventory.py 327530 327535
+```
+
+O utilitário aceita vários IDs na mesma sessão, imprime apenas títulos, IDs,
+contagens e caminhos JSON seguros e fecha a janela controlada do Edge ao final.
 
 ### Executar ou dividir o catálogo pelo terminal
 
@@ -370,10 +386,11 @@ iniciar.bat
     ├── ambiente isolado e dependências fixadas
     └── estrategia_download_edge_any.py
         └── estrategia_downloader/
-            ├── app.py          autenticação, varredura e orquestração
+            ├── app.py          autenticação, download e orquestração
             ├── alerts.py       recuperação de alertas do Edge
             ├── browser.py      criação confiável do Edge
             ├── collection.py   coleção integral, nomes e estado retomável
+            ├── course_inventory.py inventário canônico de aulas e recursos
             ├── course_metadata.py consulta direta do nome canônico do curso
             ├── discovery.py    classificação e parsing testável
             ├── downloads.py    HTTP, retomada, disco e progresso
@@ -390,9 +407,11 @@ Os testes não usam credenciais reais e não acessam cursos reais. Eles cobrem:
 
 - bootstrap, metadados, launchers e caminhos Windows complexos;
 - API local, autenticação, modos, cancelamento e estados finais;
-- fixtures HTML sanitizados de aulas, vídeos e materiais;
-- estabilização de listas lazy-loaded, recuperação de vídeos após reabrir a aula
-  e bloqueio de falso sucesso quando resta qualquer pendência;
+- contrato da API de cursos e aulas, contagens exatas, IDs únicos, resoluções de
+  vídeo, variantes de material e campos de URL desconhecidos;
+- garantia de uma chamada por aula disponível e nenhuma chamada de detalhe para
+  aulas cuja própria API marca como futuras;
+- fixtures HTML sanitizados mantidos para os diagnósticos legados;
 - retomada automática de pastas incompletas e migração segura de pastas legadas;
 - catálogo integral, reauditoria, isolamento de falhas, filtros e divisão segura
   de cursos inteiros entre volumes;
@@ -407,7 +426,8 @@ O CI principal roda no Windows com a mesma combinação fixada de Python e depen
 ## Limitações conhecidas
 
 - somente Microsoft Edge é suportado atualmente;
-- mudanças futuras no HTML do Estratégia podem exigir atualização dos seletores;
+- mudanças futuras nas APIs não documentadas podem exigir atualização dos campos
+  reconhecidos; URLs desconhecidas bloqueiam a conclusão para evitar omissões;
 - redes ou políticas corporativas podem impedir downloads ou execução, mesmo sem necessidade de Administrador;
 - a suíte automatizada não autentica em uma conta real e não baixa um curso real;
 - URLs temporárias podem expirar no servidor e exigir uma nova autenticação.
