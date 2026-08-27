@@ -233,14 +233,19 @@ def extract_course_snapshot(
         else:
             name = heading or description or f"Aula {position - 1:02d}"
         summary_resources = []
-        for field_name, kind, title, fallback in _LESSON_RESOURCE_FIELDS:
+        for (
+            field_name,
+            kind,
+            resource_title,
+            fallback,
+        ) in _LESSON_RESOURCE_FIELDS:
             resource_path = f"$.data.aulas[{position - 1}].{field_name}"
             raw_resource = record.get(field_name)
             resource_url = _http_url(raw_resource)
             if resource_url:
                 consumed_url_fields.add(resource_path)
                 summary_resources.append(
-                    (field_name, kind, title, fallback, resource_url)
+                    (field_name, kind, resource_title, fallback, resource_url)
                 )
             elif (
                 isinstance(raw_resource, str)

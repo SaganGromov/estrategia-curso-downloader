@@ -128,6 +128,7 @@ class CourseInventoryTest(unittest.TestCase):
 
         self.assertEqual(snapshot.unexpected_url_fields, ())
         self.assertEqual(snapshot.unresolved, ())
+        self.assertEqual(snapshot.title, "Curso")
         self.assertEqual(
             snapshot.ignored_ui_url_fields,
             ("$.data.professores[0].imagem",),
