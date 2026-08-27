@@ -26,6 +26,26 @@ _DASHBOARD_LESSON_URL = (
     "https://www.estrategiaconcursos.com.br/app/dashboard/cursos/"
     "{course_id}/aulas/{lesson_id}"
 )
+_LESSON_RESOURCE_FIELDS = (
+    (
+        "pdf_simplificado",
+        "pdf",
+        "Baixar Livro Eletrônico versão simplificada novo",
+        ".pdf",
+    ),
+    ("pdf", "pdf", "Baixar Livro Eletrônico versão original", ".pdf"),
+    (
+        "pdf_grifado",
+        "pdf",
+        "Baixar Livro Eletrônico marcação dos aprovados",
+        ".pdf",
+    ),
+    ("resumo", "pdf", "Baixar Resumo", ".pdf"),
+    ("slide", "slides", "Baixar Slides", ".pdf"),
+    ("mapa_mental", "mapa_mental", "Baixar Mapa Mental", ".pdf"),
+    ("audio", "material", "Áudio da aula", ".mp3"),
+    ("thumbnail", "material", "Imagem da aula", ".jpg"),
+)
 
 
 class CourseInventoryError(CourseMetadataError):
@@ -39,7 +59,11 @@ class CourseLesson:
     number: int
     name: str
     href: str
-    summary_pdf_url: str = field(default="", repr=False, compare=False)
+    summary_resources: tuple[tuple[str, str, str, str, str], ...] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,14 +232,25 @@ def extract_course_snapshot(
             name = f"{heading}\n{description}"
         else:
             name = heading or description or f"Aula {position - 1:02d}"
-        pdf_path = f"$.data.aulas[{position - 1}].pdf"
-        raw_pdf = record.get("pdf")
-        summary_pdf_url = _http_url(raw_pdf)
-        if summary_pdf_url:
-            consumed_url_fields.add(pdf_path)
-        elif raw_pdf is not None and raw_pdf != "":
-            unresolved.append(f"{pdf_path}: valor não contém URL HTTP utilizável")
-        records.append((lesson_id, position, name, summary_pdf_url))
+        summary_resources = []
+        for field_name, kind, title, fallback in _LESSON_RESOURCE_FIELDS:
+            resource_path = f"$.data.aulas[{position - 1}].{field_name}"
+            raw_resource = record.get(field_name)
+            resource_url = _http_url(raw_resource)
+            if resource_url:
+                consumed_url_fields.add(resource_path)
+                summary_resources.append(
+                    (field_name, kind, title, fallback, resource_url)
+                )
+            elif (
+                isinstance(raw_resource, str)
+                and raw_resource.strip()
+                and field_name != "resumo"
+            ):
+                unresolved.append(
+                    f"{resource_path}: valor não contém URL HTTP utilizável"
+                )
+        records.append((lesson_id, position, name, tuple(summary_resources)))
         number_candidates.append(_lesson_number(name, record))
 
     numbers = _assign_lesson_numbers(number_candidates)
@@ -229,9 +264,9 @@ def extract_course_snapshot(
                 course_id=course_id,
                 lesson_id=lesson_id,
             ),
-            summary_pdf_url=summary_pdf_url,
+            summary_resources=summary_resources,
         )
-        for (lesson_id, position, name, summary_pdf_url), number in zip(
+        for (lesson_id, position, name, summary_resources), number in zip(
             records,
             numbers,
         )
@@ -354,25 +389,22 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
             }
         )
 
-    lesson_fields = (
-        ("pdf_simplificado", "pdf", "Baixar Livro Eletrônico versão simplificada novo", ".pdf"),
-        ("pdf", "pdf", "Baixar Livro Eletrônico versão original", ".pdf"),
-        ("pdf_grifado", "pdf", "Baixar Livro Eletrônico marcação dos aprovados", ".pdf"),
-        ("resumo", "pdf", "Baixar Resumo", ".pdf"),
-        ("slide", "slides", "Baixar Slides", ".pdf"),
-        ("mapa_mental", "mapa_mental", "Baixar Mapa Mental", ".pdf"),
-        ("audio", "material", "Áudio da aula", ".mp3"),
-        ("thumbnail", "material", "Imagem da aula", ".jpg"),
-    )
-    for field, kind, title, fallback in lesson_fields:
-        add_material(f"$.data.{field}", data.get(field), kind, title, fallback)
-    add_material(
-        "$.course.aulas.pdf",
-        lesson.summary_pdf_url,
-        "pdf",
-        "Baixar Livro Eletrônico versão original",
-        ".pdf",
-    )
+    for field_name, kind, title, fallback in _LESSON_RESOURCE_FIELDS:
+        add_material(
+            f"$.data.{field_name}",
+            data.get(field_name),
+            kind,
+            title,
+            fallback,
+        )
+    for field_name, kind, title, fallback, url in lesson.summary_resources:
+        add_material(
+            f"$.course.aulas.{field_name}",
+            url,
+            kind,
+            title,
+            fallback,
+        )
 
     raw_videos = data.get("videos")
     if not isinstance(raw_videos, list):

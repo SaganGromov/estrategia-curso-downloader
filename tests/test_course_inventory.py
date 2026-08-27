@@ -102,7 +102,7 @@ class CourseInventoryTest(unittest.TestCase):
         )
         self.assertNotIn("secret", repr(snapshot))
 
-    def test_reconciles_summary_pdf_and_classifies_professor_portrait(self):
+    def test_reconciles_summary_materials_and_classifies_professor_portrait(self):
         summary_pdf = "https://cdn.test/book.pdf?expiration=1"
         snapshot = extract_course_snapshot(
             {
@@ -111,7 +111,12 @@ class CourseInventoryTest(unittest.TestCase):
                     "nome": "Curso",
                     "total_aulas": 1,
                     "aulas": [
-                        {"id": 20, "nome": "Aula 00", "pdf": summary_pdf}
+                        {
+                            "id": 20,
+                            "nome": "Aula 00",
+                            "pdf": summary_pdf,
+                            "pdf_simplificado": "https://cdn.test/simple.pdf",
+                        }
                     ],
                     "professores": [
                         {"imagem": "https://cdn.test/professor.jpg"}
@@ -134,12 +139,13 @@ class CourseInventoryTest(unittest.TestCase):
                 "data": {
                     "id": 20,
                     "pdf": summary_pdf.replace("expiration=1", "expiration=2"),
+                    "pdf_simplificado": "https://cdn.test/simple.pdf",
                     "videos": [],
                 }
             },
             snapshot.lessons[0],
         )
-        self.assertEqual(len(lesson_snapshot.materials), 1)
+        self.assertEqual(len(lesson_snapshot.materials), 2)
 
     def test_lesson_snapshot_selects_highest_video_and_all_known_files(self):
         lesson = CourseLesson("3163819", 1, 5, "Aula 05", "https://site/aula")
