@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
@@ -39,6 +39,7 @@ class CourseLesson:
     number: int
     name: str
     href: str
+    summary_pdf_url: str = field(default="", repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,8 @@ class CourseSnapshot:
     lessons: tuple[CourseLesson, ...]
     future_release_dates: tuple[date, ...] = ()
     unexpected_url_fields: tuple[str, ...] = ()
+    unresolved: tuple[str, ...] = ()
+    ignored_ui_url_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +188,8 @@ def extract_course_snapshot(
     records = []
     number_candidates = []
     seen_ids = set()
+    consumed_url_fields = set()
+    unresolved = []
     for position, record in enumerate(raw_lessons, start=1):
         if not isinstance(record, Mapping):
             raise CourseInventoryError(
@@ -203,7 +208,14 @@ def extract_course_snapshot(
             name = f"{heading}\n{description}"
         else:
             name = heading or description or f"Aula {position - 1:02d}"
-        records.append((lesson_id, position, name))
+        pdf_path = f"$.data.aulas[{position - 1}].pdf"
+        raw_pdf = record.get("pdf")
+        summary_pdf_url = _http_url(raw_pdf)
+        if summary_pdf_url:
+            consumed_url_fields.add(pdf_path)
+        elif raw_pdf is not None and raw_pdf != "":
+            unresolved.append(f"{pdf_path}: valor não contém URL HTTP utilizável")
+        records.append((lesson_id, position, name, summary_pdf_url))
         number_candidates.append(_lesson_number(name, record))
 
     numbers = _assign_lesson_numbers(number_candidates)
@@ -217,9 +229,22 @@ def extract_course_snapshot(
                 course_id=course_id,
                 lesson_id=lesson_id,
             ),
+            summary_pdf_url=summary_pdf_url,
         )
-        for (lesson_id, position, name), number in zip(records, numbers)
+        for (lesson_id, position, name, summary_pdf_url), number in zip(
+            records,
+            numbers,
+        )
     )
+    all_url_fields = tuple(_iter_url_fields(data))
+    ignored_ui_url_fields = tuple(
+        sorted(
+            path
+            for path, _url in all_url_fields
+            if re.fullmatch(r"\$\.data\.professores\[\d+\]\.imagem", path)
+        )
+    )
+    ignored_paths = set(ignored_ui_url_fields)
     return CourseSnapshot(
         course_id=course_id,
         title=title,
@@ -227,8 +252,14 @@ def extract_course_snapshot(
         lessons=lessons,
         future_release_dates=_future_release_dates(data, today=today),
         unexpected_url_fields=tuple(
-            sorted(path for path, _url in _iter_url_fields(data))
+            sorted(
+                path
+                for path, _url in all_url_fields
+                if path not in consumed_url_fields and path not in ignored_paths
+            )
         ),
+        unresolved=tuple(unresolved),
+        ignored_ui_url_fields=ignored_ui_url_fields,
     )
 
 
@@ -335,6 +366,13 @@ def extract_lesson_snapshot(payload, lesson: CourseLesson) -> LessonSnapshot:
     )
     for field, kind, title, fallback in lesson_fields:
         add_material(f"$.data.{field}", data.get(field), kind, title, fallback)
+    add_material(
+        "$.course.aulas.pdf",
+        lesson.summary_pdf_url,
+        "pdf",
+        "Baixar Livro Eletrônico versão original",
+        ".pdf",
+    )
 
     raw_videos = data.get("videos")
     if not isinstance(raw_videos, list):

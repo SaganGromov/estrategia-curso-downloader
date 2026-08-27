@@ -1857,6 +1857,10 @@ def executar_conteudo_curso(
             gerenciador.registrar_falha_descoberta(
                 f"curso {curso_id}: campo de URL não classificado em {caminho}"
             )
+        for descricao in curso.unresolved:
+            gerenciador.registrar_falha_descoberta(
+                f"curso {curso_id}: {descricao}"
+            )
         chaves_atuais = {
             f"aula_{aula.number:02d}_posicao_{aula.position:02d}"
             for aula in aulas
@@ -1874,6 +1878,10 @@ def executar_conteudo_curso(
         )
         liberacoes_futuras = list(curso.future_release_dates) if not aulas else []
         if liberacoes_futuras:
+            if curso.unexpected_url_fields or curso.unresolved:
+                raise CourseInventoryError(
+                    "o curso futuro contém recursos de API ainda não classificados"
+                )
             datas = [valor.isoformat() for valor in liberacoes_futuras]
             resumo = {
                 "encontrados": 0,

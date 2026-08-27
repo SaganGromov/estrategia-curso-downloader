@@ -80,8 +80,13 @@ def main() -> int:
             print(f"Declared lessons: {course.total_lessons}")
             print(f"Unique lesson IDs: {len(course.lessons)}")
             issues = list(course.unexpected_url_fields)
+            issues.extend(course.unresolved)
             for path in course.unexpected_url_fields:
                 print(f"Unknown course URL field: {path}")
+            for description in course.unresolved:
+                print(f"Unresolved course field: {description}")
+            for path in course.ignored_ui_url_fields:
+                print(f"Known course UI URL field: {path}")
 
             total_materials = 0
             total_videos = 0

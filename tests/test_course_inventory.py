@@ -102,6 +102,45 @@ class CourseInventoryTest(unittest.TestCase):
         )
         self.assertNotIn("secret", repr(snapshot))
 
+    def test_reconciles_summary_pdf_and_classifies_professor_portrait(self):
+        summary_pdf = "https://cdn.test/book.pdf?expiration=1"
+        snapshot = extract_course_snapshot(
+            {
+                "data": {
+                    "id": 100,
+                    "nome": "Curso",
+                    "total_aulas": 1,
+                    "aulas": [
+                        {"id": 20, "nome": "Aula 00", "pdf": summary_pdf}
+                    ],
+                    "professores": [
+                        {"imagem": "https://cdn.test/professor.jpg"}
+                    ],
+                }
+            },
+            "100",
+        )
+
+        self.assertEqual(snapshot.unexpected_url_fields, ())
+        self.assertEqual(snapshot.unresolved, ())
+        self.assertEqual(
+            snapshot.ignored_ui_url_fields,
+            ("$.data.professores[0].imagem",),
+        )
+        self.assertNotIn(summary_pdf, repr(snapshot))
+
+        lesson_snapshot = extract_lesson_snapshot(
+            {
+                "data": {
+                    "id": 20,
+                    "pdf": summary_pdf.replace("expiration=1", "expiration=2"),
+                    "videos": [],
+                }
+            },
+            snapshot.lessons[0],
+        )
+        self.assertEqual(len(lesson_snapshot.materials), 1)
+
     def test_lesson_snapshot_selects_highest_video_and_all_known_files(self):
         lesson = CourseLesson("3163819", 1, 5, "Aula 05", "https://site/aula")
         shared_slide = "https://cdn.test/slide.pdf?expiration=1"
