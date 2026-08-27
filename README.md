@@ -253,6 +253,31 @@ ainda consulta uma vez a API para detectar conteúdo novo que a plataforma tenha
 publicado depois do snapshot, mas reutiliza tudo que o manifesto local já
 confirmou.
 
+#### Isolar extras legados duplicados
+
+Um certificado profundo também distingue arquivos canônicos de extras legados.
+Para listar apenas os extras cujo SHA-256 já existe em um arquivo canônico do
+mesmo curso:
+
+```bash
+python3 tools/quarantine_duplicate_extras.py \
+  /mnt/f/estrategia-cursos-completos/bacen-financas-id-327536
+```
+
+O padrão é um dry-run. Para aplicar o plano:
+
+```bash
+python3 tools/quarantine_duplicate_extras.py \
+  /mnt/f/estrategia-cursos-completos/bacen-financas-id-327536 \
+  --apply
+```
+
+Antes de mover qualquer arquivo, a ferramenta recalcula o hash tanto da cópia
+legada quanto do equivalente canônico. As duplicatas vão para uma quarentena
+oculta no mesmo volume, nunca são apagadas, e a árvore restante recebe uma nova
+certificação profunda. Se essa certificação falhar, todas as movimentações são
+revertidas. Extras sem equivalente canônico ficam intocados.
+
 ## Instalação automática e segurança
 
 O bootstrap usa uma versão de Python explicitamente fixada em `bootstrap-config.json` e dependências testadas em `requirements.lock.txt`.
