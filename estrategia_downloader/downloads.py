@@ -547,12 +547,43 @@ class GerenciadorDownloads:
                 allow_redirects=True,
                 timeout=(HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT),
             ) as resposta:
-                if not 200 <= getattr(resposta, "status_code", 0) < 300:
-                    return None
-                tamanho = int(resposta.headers.get("Content-Length") or 0)
-                return tamanho if tamanho > 0 else None
+                if 200 <= getattr(resposta, "status_code", 0) < 300:
+                    tamanho = int(resposta.headers.get("Content-Length") or 0)
+                    if tamanho > 0:
+                        return tamanho
         except (OSError, TypeError, ValueError, requests.RequestException):
-            return None
+            pass
+
+        # Alguns CDNs recusam HEAD, mas informam o tamanho em uma resposta de
+        # faixa. ``stream=True`` permite fechar uma eventual resposta 200 sem
+        # consumir o corpo inteiro quando o servidor ignora Range.
+        try:
+            with self.sessao.get(
+                url,
+                stream=True,
+                timeout=(HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT),
+                headers={"Range": "bytes=0-0", "Accept-Encoding": "identity"},
+            ) as resposta:
+                status = getattr(resposta, "status_code", 0)
+                content_range = (
+                    resposta.headers.get("Content-Range") or ""
+                ).strip()
+                if status == 206:
+                    match = CONTENT_RANGE_RE.fullmatch(content_range)
+                    if match and match.group(3) != "*":
+                        tamanho = int(match.group(3))
+                        return tamanho if tamanho > 0 else None
+                if status == 416:
+                    match = CONTENT_RANGE_COMPLETE_RE.fullmatch(content_range)
+                    if match:
+                        tamanho = int(match.group(1))
+                        return tamanho if tamanho > 0 else None
+                if 200 <= status < 300:
+                    tamanho = int(resposta.headers.get("Content-Length") or 0)
+                    return tamanho if tamanho > 0 else None
+        except (OSError, TypeError, ValueError, requests.RequestException):
+            pass
+        return None
 
     @staticmethod
     def _caminho_backup(caminho: Path) -> Path:

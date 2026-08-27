@@ -28,6 +28,7 @@ class RespostaFake:
             "Content-Length": str(len(corpo)),
         }
         self.interromper = interromper
+        self.iteracoes = 0
 
     def __enter__(self):
         return self
@@ -42,6 +43,7 @@ class RespostaFake:
             raise erro
 
     def iter_content(self, chunk_size):
+        self.iteracoes += 1
         meio = max(len(self.corpo) // 2, 1)
         yield self.corpo[:meio]
         if self.interromper:
@@ -306,6 +308,70 @@ class DownloadsResumeTest(unittest.TestCase):
             self.assertEqual(destino.read_bytes(), CONTEUDO)
             self.assertEqual(gerenciador.existentes, 1)
             self.assertEqual(gerenciador.baixados, 0)
+            self.assertEqual(
+                gerenciador.sessao.requisicoes[0][1]["headers"]["Range"],
+                "bytes=0-0",
+            )
+            self.assertEqual(resposta.iteracoes, 0)
+
+    def test_auditoria_obtem_total_de_range_206_sem_consumir_corpo(self):
+        with TemporaryDirectory() as pasta:
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
+            destino.write_bytes(CONTEUDO)
+            cabeca = RespostaFake(b"", status=405)
+            resposta = RespostaFake(
+                b"x",
+                status=206,
+                headers={
+                    "Content-Type": "application/pdf",
+                    "Content-Length": "1",
+                    "Content-Range": "bytes 0-0/10",
+                },
+            )
+            gerenciador = self.criar(
+                pasta,
+                [resposta],
+                auditar_existentes=True,
+                cabecas=[cabeca],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item()))
+
+            self.assertEqual(destino.read_bytes(), CONTEUDO)
+            self.assertEqual(gerenciador.existentes, 1)
+            self.assertEqual(gerenciador.baixados, 0)
+            self.assertEqual(resposta.iteracoes, 0)
+
+    def test_auditoria_usa_content_length_de_range_ignorado_sem_corpo(self):
+        with TemporaryDirectory() as pasta:
+            destino = caminho_pdf(pasta)
+            destino.parent.mkdir(parents=True)
+            destino.write_bytes(CONTEUDO)
+            cabeca = RespostaFake(b"", status=405)
+            resposta = RespostaFake(
+                CONTEUDO,
+                status=200,
+                headers={
+                    "Content-Type": "application/pdf",
+                    "Content-Length": "10",
+                },
+            )
+            gerenciador = self.criar(
+                pasta,
+                [resposta],
+                auditar_existentes=True,
+                cabecas=[cabeca],
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO):
+                self.assertTrue(gerenciador.baixar(item()))
+
+            self.assertEqual(destino.read_bytes(), CONTEUDO)
+            self.assertEqual(gerenciador.existentes, 1)
+            self.assertEqual(gerenciador.baixados, 0)
+            self.assertEqual(resposta.iteracoes, 0)
 
     def test_auditoria_substitui_sobretamanho_e_remove_backup_apos_sucesso(self):
         with TemporaryDirectory() as pasta:
