@@ -84,6 +84,7 @@ from .integrity import (
     safe_video_record,
     save_inventory,
 )
+from .lesson_markers import reconcile_no_video_markers
 from .resume import localizar_pasta_retomavel, salvar_estado_execucao
 from .utils import (
     EspacoInsuficienteError,
@@ -1466,6 +1467,7 @@ def auditar_e_baixar_snapshot_api(
         "passagens": 1,
         "estavel": not snapshot.unresolved and not snapshot.unexpected_url_fields,
         "modo": "api",
+        "videos_auditados": bool(incluir_videos),
         "materiais": sorted(
             materiais_manifesto.values(), key=lambda item: item["identidade"]
         ),
@@ -2020,6 +2022,18 @@ def executar_conteudo_curso(
                 "recursos_unicos_manifesto": len(identidades_manifesto),
             }
         )
+        marcador = reconcile_no_video_markers(
+            download_dir,
+            curso_id,
+            inventario_aulas,
+        )
+        if marcador["criados"] or marcador["atualizados"] or marcador["removidos"]:
+            print(
+                "   📝 Marcadores de aulas sem vídeos reconciliados: "
+                f"{len(marcador['criados'])} criado(s), "
+                f"{len(marcador['atualizados'])} atualizado(s), "
+                f"{len(marcador['removidos'])} removido(s)."
+            )
         garantir_curso_completo(
             gerenciador,
             catalogo_remoto_vazio=not identidades_manifesto,

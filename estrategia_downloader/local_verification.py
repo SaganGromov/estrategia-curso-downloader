@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .integrity import AUDIT_VERSION, INVENTORY_FILE, INVENTORY_SCHEMA
+from .lesson_markers import NO_VIDEOS_MARKER, reconcile_no_video_markers
 from .utils import safe_filename
 
 CERTIFICATE_FILE = ".certificado_integridade_estrategia.json"
@@ -23,6 +24,7 @@ _CONTROL_FILES = {
     INVENTORY_FILE,
     STATE_FILE,
     LINK_MANIFEST,
+    NO_VIDEOS_MARKER,
 }
 _TYPE_LAYOUT = {
     "video": ("Vídeo", ("videos",)),
@@ -358,6 +360,28 @@ def verify_course_folder(
         for path in all_files
         if path.name not in _CONTROL_FILES and not _is_transient(path)
     ]
+    marker_report = reconcile_no_video_markers(
+        folder,
+        course_id,
+        lessons,
+        apply=False,
+    )
+    for path in marker_report["criados"]:
+        issues.append(
+            _issue("missing_no_video_marker", "marcador de aula sem vídeos ausente", folder / path)
+        )
+    for path in marker_report["atualizados"]:
+        issues.append(
+            _issue("invalid_no_video_marker", "marcador de aula sem vídeos divergente", folder / path)
+        )
+    for path in marker_report["removidos"]:
+        issues.append(
+            _issue("stale_no_video_marker", "marcador de aula sem vídeos obsoleto", folder / path)
+        )
+    for path in marker_report["conflitos"]:
+        issues.append(
+            _issue("no_video_marker_conflict", "inventário sem vídeos conflita com conteúdo da pasta", folder / path)
+        )
     file_index: dict[tuple[int, str, str], list[Path]] = {}
     for path in content_files:
         relative_parts = path.relative_to(folder).parts

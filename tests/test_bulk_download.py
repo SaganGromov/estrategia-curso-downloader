@@ -23,6 +23,7 @@ from estrategia_downloader.errors import (
     ProcessamentoCursoError,
     mensagem_usuario_para_erro,
 )
+from estrategia_downloader.lesson_markers import NO_VIDEOS_MARKER
 from estrategia_downloader.resume import ARQUIVO_ESTADO
 
 
@@ -450,6 +451,16 @@ class BulkDownloadTest(unittest.TestCase):
             self.assertEqual(
                 {record["passagens"] for record in inventory["aulas"].values()},
                 {1},
+            )
+            self.assertEqual(
+                {record["videos_auditados"] for record in inventory["aulas"].values()},
+                {True},
+            )
+            self.assertTrue(
+                (destination / "aula_00" / "videos" / NO_VIDEOS_MARKER).is_file()
+            )
+            self.assertTrue(
+                (destination / "aula_01" / "videos" / NO_VIDEOS_MARKER).is_file()
             )
 
     def test_executor_downloads_available_lesson_and_skips_future_detail(self):
