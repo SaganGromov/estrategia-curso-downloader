@@ -243,12 +243,12 @@ python3 tools/verify_course_download.py \
 O verificador percorre a árvore local uma vez, reconstrói o nome esperado de
 cada ocorrência do manifesto, rejeita lacunas mesmo na presença de arquivos
 legados extras, rejeita `.part` e outros transitórios, chama `pdfinfo`, `ffprobe`
-ou `identify` para formatos conhecidos e calcula SHA-256. Hard links do mesmo
+ou `ffmpeg` para formatos conhecidos e calcula SHA-256. Hard links do mesmo
 conteúdo são lidos uma única vez. Somente uma verificação aprovada grava
 `.certificado_integridade_estrategia.json`; o certificado contém caminhos
 relativos, tamanhos e hashes, nunca URLs, cookies ou tokens.
 
-`pdfinfo`, `ffprobe` e `identify` são validadores opcionais externos e estão
+`pdfinfo`, `ffprobe` e `ffmpeg` são validadores opcionais externos e estão
 disponíveis no WSL usado no desenvolvimento. Se algum deles não estiver no
 `PATH`, a verificação profunda falha explicitamente. `--no-structure` dispensa
 esses executáveis e ainda permite um certificado baseado em manifesto,

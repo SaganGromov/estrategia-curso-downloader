@@ -3,10 +3,12 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from estrategia_downloader.integrity import AUDIT_VERSION, INVENTORY_SCHEMA
 from estrategia_downloader.local_verification import (
     CERTIFICATE_FILE,
+    _structure_command,
     verify_course_folder,
     write_certificate,
 )
@@ -131,6 +133,42 @@ class LocalVerificationTest(unittest.TestCase):
             self.assertTrue(report["ok"])
             with self.assertRaises(ValueError):
                 write_certificate(course, report)
+
+    def test_images_are_fully_decoded_with_ffmpeg(self):
+        image = Path("/tmp/imagem.jpg")
+
+        self.assertEqual(
+            _structure_command(image),
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(image),
+                "-f",
+                "null",
+                "-",
+            ],
+        )
+
+    def test_validation_issue_skips_wasted_hash_pass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            course = self._course(Path(temporary))
+
+            with (
+                patch(
+                    "estrategia_downloader.local_verification._verify_structure",
+                    return_value="estrutura inválida",
+                ),
+                patch(
+                    "estrategia_downloader.local_verification._sha256"
+                ) as calculate_hash,
+            ):
+                report = verify_course_folder(course)
+
+            self.assertFalse(report["ok"])
+            self.assertFalse(report["hashes_calculados"])
+            calculate_hash.assert_not_called()
 
     def test_certifies_released_content_while_future_lesson_is_scheduled(self):
         with tempfile.TemporaryDirectory() as temporary:

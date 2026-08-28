@@ -124,7 +124,16 @@ def _structure_command(path: Path) -> list[str] | None:
             str(path),
         ]
     if extension in _IMAGE_EXTENSIONS:
-        return ["identify", "-regard-warnings", str(path)]
+        return [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-f",
+            "null",
+            "-",
+        ]
     return None
 
 
@@ -438,6 +447,7 @@ def verify_course_folder(
         for path, error in structure_errors.items():
             issues.append(_issue("structure", error, path))
 
+    should_calculate_hashes = bool(calculate_hashes and not issues)
     hash_cache: dict[tuple, str] = {}
     file_records = []
     total_bytes = 0
@@ -447,7 +457,7 @@ def verify_course_folder(
             total_bytes += stat.st_size
             identity = _physical_identity(path, stat)
             digest = ""
-            if calculate_hashes:
+            if should_calculate_hashes:
                 digest = hash_cache.get(identity, "")
                 if not digest:
                     digest = _sha256(path)
@@ -480,7 +490,7 @@ def verify_course_folder(
         "arquivos_fisicos": len(content_files),
         "extras_legados": len(set(content_files) - matched),
         "bytes_logicos": total_bytes,
-        "hashes_calculados": bool(calculate_hashes),
+        "hashes_calculados": should_calculate_hashes,
         "estrutura_verificada": bool(verify_structure),
         "problemas": issues,
         "arquivos": file_records,
