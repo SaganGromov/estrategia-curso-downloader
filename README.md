@@ -203,6 +203,21 @@ vídeos nem documentos PDF ficam em `outros_materiais`, criada somente quando
 necessária. Assim, os arquivos de uma aula não ficam misturados com os das
 demais.
 
+Quando a auditoria integral de uma aula liberada e estável confirma que a lista
+de vídeos da API está vazia, a pasta `videos` recebe
+`SEM_VIDEOS_NESTA_AULA.txt`. Esse arquivo deixa explícito que a pasta vazia não
+representa uma falha de download. Aulas futuras, bloqueadas, instáveis ou
+processadas no modo reduzido não recebem o marcador. Se uma auditoria posterior
+encontrar vídeos, o marcador obsoleto é removido automaticamente. Inventários v4
+anteriores podem ser reconciliados explicitamente, quando se sabe que vieram de
+uma execução integral:
+
+```bash
+python3 tools/reconcile_no_video_markers.py \
+  --root /mnt/f/estrategia-cursos-completos \
+  --assume-legacy-full --apply
+```
+
 Cada pasta contém também `.estado_estrategia.json`. Se uma execução falhar,
 for cancelada ou for interrompida, informar novamente o mesmo curso reutiliza
 automaticamente a pasta incompleta mais recente. Arquivos completos são
@@ -459,6 +474,7 @@ iniciar.bat
             ├── downloads.py    HTTP, retomada, disco e progresso
             ├── diagnostics.py  relatório sanitizado
             ├── errors.py       mensagens amigáveis
+            ├── lesson_markers.py evidência de aulas sem vídeos
             └── utils.py        nomes, URLs e utilitários
 ```
 
@@ -478,6 +494,8 @@ Os testes não usam credenciais reais e não acessam cursos reais. Eles cobrem:
 - retomada automática de pastas incompletas e migração segura de pastas legadas;
 - catálogo integral, reauditoria, isolamento de falhas, filtros e divisão segura
   de cursos inteiros entre volumes;
+- marcadores de aulas sem vídeos, incluindo exclusões de aulas futuras e
+  remoção de evidência obsoleta;
 - nomes descritivos de curso em `kebab-case`, com ID e timestamp rastreáveis;
 - nomes reservados e caracteres especiais do Windows;
 - URLs sensíveis e duplicatas;
