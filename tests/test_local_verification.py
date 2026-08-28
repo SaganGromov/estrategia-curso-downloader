@@ -12,6 +12,10 @@ from estrategia_downloader.local_verification import (
     verify_course_folder,
     write_certificate,
 )
+from estrategia_downloader.lesson_markers import (
+    NO_VIDEOS_MARKER,
+    reconcile_no_video_markers,
+)
 
 
 class LocalVerificationTest(unittest.TestCase):
@@ -87,6 +91,41 @@ class LocalVerificationTest(unittest.TestCase):
             self.assertEqual(report["extras_legados"], 0)
             self.assertTrue(all(item["sha256"] for item in report["arquivos"]))
             self.assertEqual(certificate.name, CERTIFICATE_FILE)
+
+    def test_accepts_marker_derived_from_legacy_full_api_inventory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            course = self._course(Path(temporary))
+            inventory_path = course / ".inventario_estrategia.json"
+            inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+            lesson = inventory["aulas"]["aula_00_posicao_01"]
+            lesson["videos"] = []
+            lesson["arquivos"] = [lesson["arquivos"][0]]
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+            state_path = course / ".estado_estrategia.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["resumo"]["ocorrencias_confirmadas"] = 1
+            state["resumo"]["recursos_unicos_manifesto"] = 1
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            (course / "aula_00" / "videos" / "Vídeo 02 - Parte 1.mp4").unlink()
+
+            marker_report = reconcile_no_video_markers(
+                course,
+                "123",
+                inventory["aulas"],
+                assume_legacy_full=True,
+            )
+            self.assertEqual(marker_report["criados"], [
+                f"aula_00/videos/{NO_VIDEOS_MARKER}"
+            ])
+
+            report = verify_course_folder(
+                course,
+                calculate_hashes=False,
+                verify_structure=False,
+            )
+
+            self.assertTrue(report["ok"])
 
     def test_rejects_missing_resource_even_when_an_extra_file_exists(self):
         with tempfile.TemporaryDirectory() as temporary:

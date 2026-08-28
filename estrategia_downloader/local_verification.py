@@ -373,6 +373,12 @@ def verify_course_folder(
         folder,
         course_id,
         lessons,
+        # Inventários finais da auditoria v4 anteriores à introdução de
+        # ``videos_auditados`` foram produzidos por passagens integrais da API.
+        # O verificador já rejeita acima qualquer aula API instável ou com
+        # número de passagens diferente de um, portanto essa compatibilidade
+        # não transforma inventários reduzidos em evidência de ausência.
+        assume_legacy_full=True,
         apply=False,
     )
     for path in marker_report["criados"]:
