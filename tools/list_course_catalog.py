@@ -39,8 +39,8 @@ def parse_args():
 
 def main() -> int:
     args = parse_args()
-    email = (os.getenv("ESTRATEGIA_EMAIL") or "").strip()
-    password = os.getenv("ESTRATEGIA_PASSWORD") or ""
+    email = (os.environ.pop("ESTRATEGIA_EMAIL", "") or "").strip()
+    password = os.environ.pop("ESTRATEGIA_PASSWORD", "") or ""
     if args.submit_login and (not email or not password):
         print(
             "--submit-login requer ESTRATEGIA_EMAIL e ESTRATEGIA_PASSWORD",

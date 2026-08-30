@@ -1,4 +1,5 @@
 import io
+import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -49,6 +50,8 @@ class CatalogCliTest(unittest.TestCase):
             ),
         ):
             self.assertEqual(list_course_catalog.main(), 0)
+            self.assertNotIn("ESTRATEGIA_EMAIL", os.environ)
+            self.assertNotIn("ESTRATEGIA_PASSWORD", os.environ)
 
         self.assertEqual(
             stdout.getvalue(),
